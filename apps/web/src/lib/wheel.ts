@@ -45,6 +45,26 @@ export function pickSpinTarget(currentRotation: number, count: number): {
   };
 }
 
+export function rotationForWinner(
+  currentRotation: number,
+  count: number,
+  winnerIndex: number,
+  extraTurns: number,
+): number {
+  if (count <= 0) {
+    return currentRotation;
+  }
+
+  const clampedIndex = Math.max(0, Math.min(count - 1, winnerIndex));
+  const segmentAngle = anglePerSegment(count);
+  const targetWithinCircle =
+    FULL_CIRCLE - POINTER_ANGLE - (clampedIndex + 0.5) * segmentAngle;
+  const currentMod = ((currentRotation % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
+  const offset = ((targetWithinCircle - currentMod) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
+
+  return currentRotation + Math.max(extraTurns, 0) * FULL_CIRCLE + offset;
+}
+
 export function segmentColor(index: number): string {
   const colors = [
     "#00f5ff",

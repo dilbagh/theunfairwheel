@@ -89,6 +89,19 @@ const groupsRoutes = new Hono<AppEnv>()
 
     return c.json(await response.json());
   })
+  .get("/groups/:groupId/ws", async (c) => {
+    const groupId = c.req.param("groupId");
+    const response = await callDurableObject(groupStub(c, groupId), "/ws", {
+      method: "GET",
+      headers: c.req.raw.headers,
+    });
+
+    if (response.status === 101) {
+      return response;
+    }
+
+    return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
+  })
   .patch("/groups/:groupId/settings", updateSettingsBody, async (c) => {
     const groupId = c.req.param("groupId");
     const body = c.req.valid("json");
@@ -107,6 +120,22 @@ const groupsRoutes = new Hono<AppEnv>()
     }
 
     return c.json(await response.json());
+  })
+  .post("/groups/:groupId/spin", async (c) => {
+    const groupId = c.req.param("groupId");
+
+    const response = await callDurableObject(groupStub(c, groupId), "/spin", {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      return c.json(
+        { error: await parseError(response) },
+        response.status as 404 | 409 | 500,
+      );
+    }
+
+    return c.json(await response.json(), 202);
   })
   .get("/groups/:groupId/participants", async (c) => {
     const groupId = c.req.param("groupId");
@@ -137,10 +166,7 @@ const groupsRoutes = new Hono<AppEnv>()
 
     return c.json(await response.json(), 201);
   })
-  .patch(
-    "/groups/:groupId/participants/:participantId",
-    updateParticipantBody,
-    async (c) => {
+  .patch("/groups/:groupId/participants/:participantId", updateParticipantBody, async (c) => {
     const groupId = c.req.param("groupId");
     const participantId = c.req.param("participantId");
     const body = c.req.valid("json");
@@ -162,9 +188,8 @@ const groupsRoutes = new Hono<AppEnv>()
       );
     }
 
-      return c.json(await response.json());
-    },
-  )
+    return c.json(await response.json());
+  })
   .delete("/groups/:groupId/participants/:participantId", async (c) => {
     const groupId = c.req.param("groupId");
     const participantId = c.req.param("participantId");

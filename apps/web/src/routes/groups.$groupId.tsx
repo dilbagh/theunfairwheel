@@ -2,18 +2,50 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { audioEngine } from "../lib/audio";
-import { ApiError, groupsApi, type Participant } from "../lib/groups";
-import { clearLastGroupId, setLastGroupId } from "../lib/storage";
+import { connectGroupRealtime, type GroupRealtimeStatus } from "../lib/group-realtime";
 import {
-  activeParticipants,
-  pickSpinTarget,
-  segmentColor,
-  winnerIndexFromRotation,
-} from "../lib/wheel";
+  ApiError,
+  groupsApi,
+  type GroupRealtimeEvent,
+  type GroupSpinState,
+  type Participant,
+} from "../lib/groups";
+import { clearLastGroupId, setLastGroupId } from "../lib/storage";
+import { activeParticipants, rotationForWinner, segmentColor } from "../lib/wheel";
 
 export const Route = createFileRoute("/groups/$groupId")({
   component: GroupPage,
 });
+
+type GroupData = Awaited<ReturnType<typeof groupsApi.getGroup>>;
+
+type ParticipantMutationContext = {
+  previousParticipants: Participant[];
+};
+
+type AddParticipantMutationContext = ParticipantMutationContext & {
+  optimisticId: string;
+};
+
+function normalizeParticipantName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function dedupeParticipantsById(participants: Participant[]): Participant[] {
+  const seen = new Set<string>();
+  const result: Participant[] = [];
+
+  for (const participant of participants) {
+    if (seen.has(participant.id)) {
+      continue;
+    }
+
+    seen.add(participant.id);
+    result.push(participant);
+  }
+
+  return result;
+}
 
 function GroupPage() {
   const { groupId } = Route.useParams();
@@ -26,21 +58,17 @@ function GroupPage() {
   const [winner, setWinner] = useState<Participant | null>(null);
   const [removeWinnerAfterSpin, setRemoveWinnerAfterSpin] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [spinError, setSpinError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(audioEngine.isMuted());
+  const [realtimeStatus, setRealtimeStatus] = useState<GroupRealtimeStatus>("connecting");
+  const [isSpinRequestPending, setIsSpinRequestPending] = useState(false);
   const timeoutRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        window.clearTimeout(timeoutRef.current);
-      }
-
-      if (tickRef.current) {
-        window.clearInterval(tickRef.current);
-      }
-    };
-  }, []);
+  const rotationRef = useRef(0);
+  const currentSpinIdRef = useRef<string | null>(null);
+  const currentSpinWinnerIdRef = useRef<string | null>(null);
+  const lastVersionRef = useRef(0);
+  const applyRealtimeEventRef = useRef<(event: GroupRealtimeEvent) => void>(() => {});
 
   const groupQuery = useQuery({
     queryKey: ["groups", groupId],
@@ -59,11 +87,215 @@ function GroupPage() {
     queryFn: () => groupsApi.listParticipants({ groupId }),
   });
 
-  const participants = useMemo(
-    () => participantsQuery.data ?? [],
-    [participantsQuery.data],
-  );
+  const participants = useMemo(() => participantsQuery.data ?? [], [participantsQuery.data]);
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
+
+  useEffect(() => {
+    rotationRef.current = rotation;
+  }, [rotation]);
+
+  const clearSpinTimers = () => {
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
+    if (tickRef.current !== null) {
+      window.clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+  };
+
+  const applyWinner = (winnerParticipantId: string | null) => {
+    if (!winnerParticipantId) {
+      setWinner(null);
+      return;
+    }
+
+    const latestParticipants =
+      queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
+    const nextWinner = latestParticipants.find((participant) => participant.id === winnerParticipantId);
+    setWinner(nextWinner ?? null);
+  };
+
+  const runSpinAnimation = (spin: GroupSpinState) => {
+    if (
+      spin.status !== "spinning" ||
+      !spin.winnerParticipantId ||
+      typeof spin.durationMs !== "number" ||
+      typeof spin.extraTurns !== "number"
+    ) {
+      return;
+    }
+
+    const latestParticipants =
+      queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
+    const latestActive = activeParticipants(latestParticipants);
+    const winnerIndex = latestActive.findIndex(
+      (participant) => participant.id === spin.winnerParticipantId,
+    );
+
+    if (winnerIndex < 0) {
+      return;
+    }
+
+    clearSpinTimers();
+
+    currentSpinIdRef.current = spin.spinId;
+    currentSpinWinnerIdRef.current = spin.winnerParticipantId;
+    setIsSpinRequestPending(false);
+    setSpinError(null);
+    setWinner(null);
+
+    const targetRotation = rotationForWinner(
+      rotationRef.current,
+      latestActive.length,
+      winnerIndex,
+      spin.extraTurns,
+    );
+
+    setIsSpinning(true);
+    setSpinDurationMs(spin.durationMs);
+    setRotation(targetRotation);
+
+    tickRef.current = window.setInterval(() => {
+      void audioEngine.playTick();
+    }, 140);
+
+    timeoutRef.current = window.setTimeout(() => {
+      clearSpinTimers();
+      setIsSpinning(false);
+      applyWinner(currentSpinWinnerIdRef.current);
+      void audioEngine.playWin();
+    }, spin.durationMs);
+  };
+
+  const applyRealtimeEvent = (event: GroupRealtimeEvent) => {
+    if (event.type !== "snapshot" && event.version <= lastVersionRef.current) {
+      return;
+    }
+
+    lastVersionRef.current = Math.max(lastVersionRef.current, event.version);
+
+    switch (event.type) {
+      case "snapshot": {
+        queryClient.setQueryData<GroupData>(["groups", groupId], event.payload.group);
+        queryClient.setQueryData<Participant[]>(["participants", groupId], event.payload.participants);
+        setRemoveWinnerAfterSpin(event.payload.group.settings.removeWinnerAfterSpin);
+
+        if (
+          event.payload.spin.status === "spinning" &&
+          event.payload.spin.spinId &&
+          event.payload.spin.spinId !== currentSpinIdRef.current
+        ) {
+          runSpinAnimation(event.payload.spin);
+        }
+
+        break;
+      }
+
+      case "group.settings.updated": {
+        setRemoveWinnerAfterSpin(event.payload.settings.removeWinnerAfterSpin);
+        queryClient.setQueryData<GroupData>(["groups", groupId], (current) =>
+          current
+            ? {
+                ...current,
+                settings: event.payload.settings,
+              }
+            : current,
+        );
+        break;
+      }
+
+      case "participant.added": {
+        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) => {
+          if (current.some((participant) => participant.id === event.payload.participant.id)) {
+            return current;
+          }
+
+          const optimisticIndex = current.findIndex(
+            (participant) =>
+              participant.id.startsWith("optimistic-") &&
+              normalizeParticipantName(participant.name) ===
+                normalizeParticipantName(event.payload.participant.name),
+          );
+
+          if (optimisticIndex >= 0) {
+            const next = [...current];
+            next[optimisticIndex] = event.payload.participant;
+            return dedupeParticipantsById(next);
+          }
+
+          return dedupeParticipantsById([...current, event.payload.participant]);
+        });
+        break;
+      }
+
+      case "participant.updated": {
+        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
+          current.map((participant) =>
+            participant.id === event.payload.participant.id
+              ? event.payload.participant
+              : participant,
+          ),
+        );
+        break;
+      }
+
+      case "participant.removed": {
+        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
+          current.filter((participant) => participant.id !== event.payload.participantId),
+        );
+
+        if (winner?.id === event.payload.participantId) {
+          setWinner(null);
+        }
+        break;
+      }
+
+      case "spin.started": {
+        if (event.payload.spin.spinId === currentSpinIdRef.current && isSpinning) {
+          break;
+        }
+
+        runSpinAnimation(event.payload.spin);
+        break;
+      }
+
+      case "spin.resolved": {
+        currentSpinWinnerIdRef.current = event.payload.spin.winnerParticipantId;
+        currentSpinIdRef.current = event.payload.spin.spinId;
+        if (!isSpinning) {
+          applyWinner(event.payload.spin.winnerParticipantId);
+        }
+        setIsSpinRequestPending(false);
+        break;
+      }
+
+      default:
+        break;
+    }
+  };
+
+  applyRealtimeEventRef.current = applyRealtimeEvent;
+
+  useEffect(() => {
+    const connection = connectGroupRealtime({
+      groupId,
+      onEvent: (event) => applyRealtimeEventRef.current(event),
+      onStatusChange: setRealtimeStatus,
+    });
+
+    return () => {
+      connection.close();
+    };
+  }, [groupId]);
+
+  useEffect(() => {
+    return () => {
+      clearSpinTimers();
+    };
+  }, []);
 
   useEffect(() => {
     if (groupQuery.data?.settings) {
@@ -77,50 +309,169 @@ function GroupPage() {
     }
   }, [groupQuery.data]);
 
-  const addMutation = useMutation({
+  const addMutation = useMutation<Participant, Error, string, AddParticipantMutationContext>({
     mutationFn: (name: string) => groupsApi.addParticipant({ groupId, name }),
-    onSuccess: async () => {
-      setParticipantName("");
+    onMutate: async (name) => {
+      await queryClient.cancelQueries({ queryKey: ["participants", groupId] });
+      const previousParticipants =
+        queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
+
+      const optimisticId = `optimistic-${crypto.randomUUID()}`;
+      const optimisticParticipant: Participant = {
+        id: optimisticId,
+        name,
+        active: true,
+      };
+
+      queryClient.setQueryData<Participant[]>(["participants", groupId], [
+        ...previousParticipants,
+        optimisticParticipant,
+      ]);
+
       setParticipantError(null);
-      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
+      setParticipantName("");
+
+      return { previousParticipants, optimisticId };
     },
-    onError: (error: Error) => {
+    onError: (error, _variables, context) => {
+      if (context) {
+        queryClient.setQueryData<Participant[]>(
+          ["participants", groupId],
+          context.previousParticipants,
+        );
+      }
       setParticipantError(error.message);
     },
-  });
+    onSuccess: (participant, _name, context) => {
+      if (!context) {
+        return;
+      }
 
-  const removeMutation = useMutation({
-    mutationFn: (participantId: string) =>
-      groupsApi.removeParticipant({ groupId, participantId }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
+      queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
+        dedupeParticipantsById(
+          current.map((item) => (item.id === context.optimisticId ? participant : item)),
+        ),
+      );
     },
   });
 
-  const toggleActiveMutation = useMutation({
-    mutationFn: ({ participantId, active }: { participantId: string; active: boolean }) =>
+  const removeMutation = useMutation<void, Error, string, ParticipantMutationContext>({
+    mutationFn: (participantId: string) => groupsApi.removeParticipant({ groupId, participantId }),
+    onMutate: async (participantId) => {
+      await queryClient.cancelQueries({ queryKey: ["participants", groupId] });
+      const previousParticipants =
+        queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
+
+      queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
+        current.filter((participant) => participant.id !== participantId),
+      );
+
+      return { previousParticipants };
+    },
+    onError: (_error, _variables, context) => {
+      if (context) {
+        queryClient.setQueryData<Participant[]>(
+          ["participants", groupId],
+          context.previousParticipants,
+        );
+      }
+    },
+  });
+
+  const toggleActiveMutation = useMutation<
+    Participant,
+    Error,
+    { participantId: string; active: boolean },
+    ParticipantMutationContext
+  >({
+    mutationFn: ({ participantId, active }) =>
       groupsApi.setParticipantActive({ groupId, participantId, active }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
+    onMutate: async ({ participantId, active }) => {
+      await queryClient.cancelQueries({ queryKey: ["participants", groupId] });
+      const previousParticipants =
+        queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
+
+      queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
+        current.map((participant) =>
+          participant.id === participantId ? { ...participant, active } : participant,
+        ),
+      );
+
+      return { previousParticipants };
+    },
+    onError: (_error, _variables, context) => {
+      if (context) {
+        queryClient.setQueryData<Participant[]>(
+          ["participants", groupId],
+          context.previousParticipants,
+        );
+      }
     },
   });
 
-  const updateSettingsMutation = useMutation({
+  const updateSettingsMutation = useMutation<
+    Awaited<ReturnType<typeof groupsApi.updateGroupSettings>>,
+    Error,
+    boolean,
+    { previousGroup: GroupData | undefined }
+  >({
     mutationFn: (nextValue: boolean) =>
       groupsApi.updateGroupSettings({
         groupId,
         settings: { removeWinnerAfterSpin: nextValue },
       }),
-    onSuccess: async (settings) => {
+    onMutate: async (nextValue) => {
+      await queryClient.cancelQueries({ queryKey: ["groups", groupId] });
+      const previousGroup = queryClient.getQueryData<GroupData>(["groups", groupId]);
+
+      queryClient.setQueryData<GroupData>(["groups", groupId], (current) =>
+        current
+          ? {
+              ...current,
+              settings: {
+                ...current.settings,
+                removeWinnerAfterSpin: nextValue,
+              },
+            }
+          : current,
+      );
+
+      setRemoveWinnerAfterSpin(nextValue);
       setSettingsError(null);
-      queryClient.setQueryData(
-        ["groups", groupId],
-        (current: Awaited<ReturnType<typeof groupsApi.getGroup>> | undefined) =>
-          current ? { ...current, settings } : current,
+
+      return { previousGroup };
+    },
+    onError: (error, _nextValue, context) => {
+      if (context) {
+        queryClient.setQueryData<GroupData>(["groups", groupId], context.previousGroup);
+        setRemoveWinnerAfterSpin(
+          context.previousGroup?.settings.removeWinnerAfterSpin ?? removeWinnerAfterSpin,
+        );
+      }
+      setSettingsError(error.message);
+    },
+    onSuccess: (settings) => {
+      setSettingsError(null);
+      queryClient.setQueryData<GroupData>(["groups", groupId], (current) =>
+        current
+          ? {
+              ...current,
+              settings,
+            }
+          : current,
       );
     },
+  });
+
+  const spinMutation = useMutation({
+    mutationFn: () => groupsApi.requestSpin({ groupId }),
+    onMutate: () => {
+      setSpinError(null);
+      setIsSpinRequestPending(true);
+    },
     onError: (error: Error) => {
-      setSettingsError(error.message);
+      setIsSpinRequestPending(false);
+      setSpinError(error.message);
     },
   });
 
@@ -139,48 +490,13 @@ function GroupPage() {
   };
 
   const onSpin = () => {
-    if (isSpinning || eligibleParticipants.length < 2) {
+    if (isSpinning || isSpinRequestPending || eligibleParticipants.length < 2) {
       return;
     }
 
-    void audioEngine.playClick();
     setWinner(null);
-
-    const { targetRotation, winnerIndex, durationMs } = pickSpinTarget(
-      rotation,
-      eligibleParticipants.length,
-    );
-
-    setIsSpinning(true);
-    setSpinDurationMs(durationMs);
-    setRotation(targetRotation);
-
-    tickRef.current = window.setInterval(() => {
-      void audioEngine.playTick();
-    }, 140);
-
-    timeoutRef.current = window.setTimeout(async () => {
-      if (tickRef.current) {
-        window.clearInterval(tickRef.current);
-      }
-
-      const confirmedIndex = winnerIndexFromRotation(
-        targetRotation,
-        eligibleParticipants.length,
-      );
-      const selected = eligibleParticipants[confirmedIndex >= 0 ? confirmedIndex : winnerIndex];
-
-      setIsSpinning(false);
-      setWinner(selected ?? null);
-      void audioEngine.playWin();
-
-      if (removeWinnerAfterSpin && selected) {
-        await toggleActiveMutation.mutateAsync({
-          participantId: selected.id,
-          active: false,
-        });
-      }
-    }, durationMs);
+    void audioEngine.playClick();
+    spinMutation.mutate();
   };
 
   if (groupQuery.isLoading || participantsQuery.isLoading) {
@@ -220,6 +536,7 @@ function GroupPage() {
           <p className="eyebrow">Group Lobby</p>
           <h1>{group.name}</h1>
           <p className="muted-text">ID: {group.id}</p>
+          <p className="muted-text">Realtime: {realtimeStatus}</p>
         </div>
         <button
           type="button"
@@ -246,11 +563,7 @@ function GroupPage() {
               placeholder="Add a name"
               maxLength={60}
             />
-            <button
-              type="submit"
-              className="primary-btn"
-              disabled={addMutation.isPending}
-            >
+            <button type="submit" className="primary-btn" disabled={addMutation.isPending}>
               Add
             </button>
           </form>
@@ -261,20 +574,14 @@ function GroupPage() {
               type="checkbox"
               checked={removeWinnerAfterSpin}
               onChange={(event) => {
-                const nextValue = event.target.checked;
-                setRemoveWinnerAfterSpin(nextValue);
-                setSettingsError(null);
-                updateSettingsMutation.mutate(nextValue, {
-                  onError: () => {
-                    setRemoveWinnerAfterSpin(!nextValue);
-                  },
-                });
+                updateSettingsMutation.mutate(event.target.checked);
               }}
               disabled={updateSettingsMutation.isPending}
             />
             Remove winner after spin
           </label>
           {settingsError && <p className="error-text">{settingsError}</p>}
+          {spinError && <p className="error-text">{spinError}</p>}
 
           <ul className="participant-list">
             {participants.length === 0 && <li className="muted-text">No participants yet.</li>}
@@ -363,9 +670,9 @@ function GroupPage() {
             type="button"
             className="primary-btn spin-btn"
             onClick={onSpin}
-            disabled={isSpinning || eligibleParticipants.length < 2}
+            disabled={isSpinning || isSpinRequestPending || eligibleParticipants.length < 2}
           >
-            {isSpinning ? "Spinning..." : "Spin the Wheel"}
+            {isSpinning || isSpinRequestPending ? "Spinning..." : "Spin the Wheel"}
           </button>
           {eligibleParticipants.length < 2 && (
             <p className="muted-text">Need at least 2 active participants to spin.</p>
@@ -390,7 +697,7 @@ function GroupPage() {
                   setWinner(null);
                   onSpin();
                 }}
-                disabled={isSpinning || eligibleParticipants.length < 2}
+                disabled={isSpinning || isSpinRequestPending || eligibleParticipants.length < 2}
               >
                 Spin Again
               </button>
