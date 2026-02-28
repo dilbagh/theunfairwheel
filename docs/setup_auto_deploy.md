@@ -112,9 +112,8 @@ It deploys on:
 - `push` to `main`
 
 It uses:
-- `cloudflare/wrangler-action@v3.14.1` for Pages deployment
-- `cloudflare/wrangler-action@v3.14.1` for Worker deployment
-- `packageManager: npm` and `wranglerVersion: 4.44.0` in both steps to avoid pnpm workspace-root install errors in CI
+- `pnpm dlx wrangler@4.44.0 pages deploy ...` for Pages deployment
+- `pnpm dlx wrangler@4.44.0 deploy ...` for Worker deployment
 
 `cloudflare/pages-action` is not used because it is deprecated.
 
@@ -173,14 +172,16 @@ Fix:
 2. Update secret.
 3. Re-run workflow.
 
-### Error: `ERR_PNPM_ADDING_TO_ROOT` in Wrangler step
+### Error: Wrangler install fails inside action (npm/pnpm errors)
 
 Likely cause:
-- Wrangler action attempted to install Wrangler using `pnpm` at workspace root.
+- `cloudflare/wrangler-action` internal Wrangler installation failed on the runner package manager version.
 
 Fix:
-1. Keep workflow configured with `packageManager: npm` in Wrangler action steps.
-2. Keep `wranglerVersion` pinned (currently `4.44.0`).
+1. Use direct CLI deploy commands in workflow:
+   - `pnpm dlx wrangler@4.44.0 pages deploy ...`
+   - `pnpm dlx wrangler@4.44.0 deploy ...`
+2. Keep `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set in step `env`.
 3. Re-run workflow.
 
 ### Frontend deployed but API calls fail
