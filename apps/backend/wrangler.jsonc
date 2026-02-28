@@ -4,5 +4,26 @@
   "compatibility_date": "2026-02-28",
   "vars": {
     "FRONTEND_URL": "http://localhost:3000"
-  }
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GROUPS_DO",
+        "class_name": "GroupDurableObject"
+      }
+    ]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "GROUP_INDEX_KV",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_WITH_KV_PREVIEW_ID"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GroupDurableObject"]
+    }
+  ]
 }

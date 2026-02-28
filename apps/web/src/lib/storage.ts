@@ -1,12 +1,7 @@
 export const STORAGE_KEYS = {
   lastGroupId: "uw:last-group-id",
-  groups: "uw:groups",
   audioMuted: "uw:audio-muted",
 } as const;
-
-export function participantsKey(groupId: string) {
-  return `uw:group-participants:${groupId}`;
-}
 
 function getStorage(): Storage | null {
   if (typeof window === "undefined") {
@@ -32,30 +27,16 @@ export function removeItem(key: string): void {
   getStorage()?.removeItem(key);
 }
 
-export function getJSON<T>(key: string, fallback: T): T {
-  const value = getItem(key);
-
-  if (!value) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-export function setJSON<T>(key: string, value: T): void {
-  setItem(key, JSON.stringify(value));
-}
-
 export function getLastGroupId(): string | null {
   return getItem(STORAGE_KEYS.lastGroupId);
 }
 
 export function setLastGroupId(groupId: string): void {
   setItem(STORAGE_KEYS.lastGroupId, groupId);
+}
+
+export function clearLastGroupId(): void {
+  removeItem(STORAGE_KEYS.lastGroupId);
 }
 
 export function getAudioMuted(): boolean {

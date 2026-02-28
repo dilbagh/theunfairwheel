@@ -1,14 +1,14 @@
-import {
-  STORAGE_KEYS,
-  getJSON,
-  participantsKey,
-  setJSON,
-} from "./storage";
+import { apiClient } from "./api-client";
+
+export type GameSettings = {
+  removeWinnerAfterSpin: boolean;
+};
 
 export type Group = {
   id: string;
   name: string;
   createdAt: string;
+  settings: GameSettings;
 };
 
 export type Participant = {
@@ -17,13 +17,10 @@ export type Participant = {
   active: boolean;
 };
 
-export type GameSettings = {
-  removeWinnerAfterSpin: boolean;
-};
-
 export type GroupsApi = {
   createGroup(input: { name: string }): Promise<Group>;
   getGroup(input: { id: string }): Promise<Group>;
+  updateGroupSettings(input: { groupId: string; settings: GameSettings }): Promise<GameSettings>;
   listParticipants(input: { groupId: string }): Promise<Participant[]>;
   addParticipant(input: { groupId: string; name: string }): Promise<Participant>;
   removeParticipant(input: {
@@ -37,141 +34,112 @@ export type GroupsApi = {
   }): Promise<Participant>;
 };
 
-function normalizeName(name: string): string {
-  return name.trim().replace(/\s+/g, " ");
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
-function validateName(name: string): string {
-  const normalized = normalizeName(name);
+async function readError(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: string };
+    return body.error ?? "Request failed.";
+  } catch {
+    return "Request failed.";
+  }
+}
 
-  if (!normalized || normalized.length > 60) {
-    throw new Error("Name must be between 1 and 60 characters.");
+async function expectJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new ApiError(await readError(response), response.status);
   }
 
-  return normalized;
+  return (await response.json()) as T;
 }
 
-function randomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function loadGroups(): Group[] {
-  return getJSON<Group[]>(STORAGE_KEYS.groups, []);
-}
-
-function saveGroups(groups: Group[]) {
-  setJSON(STORAGE_KEYS.groups, groups);
-}
-
-function loadParticipants(groupId: string): Participant[] {
-  return getJSON<Participant[]>(participantsKey(groupId), []);
-}
-
-function saveParticipants(groupId: string, participants: Participant[]) {
-  setJSON(participantsKey(groupId), participants);
-}
-
-function randomDelay() {
-  return new Promise<void>((resolve) => {
-    const ms = 150 + Math.floor(Math.random() * 250);
-    setTimeout(resolve, ms);
-  });
-}
-
-const mockGroupsApi: GroupsApi = {
+const httpGroupsApi: GroupsApi = {
   async createGroup(input) {
-    await randomDelay();
+    const response = await apiClient.groups.$post({
+      json: {
+        name: input.name,
+      },
+    });
 
-    const name = validateName(input.name);
-    const group: Group = {
-      id: randomId(),
-      name,
-      createdAt: new Date().toISOString(),
-    };
-
-    const groups = loadGroups();
-    groups.push(group);
-    saveGroups(groups);
-    saveParticipants(group.id, []);
-
-    return group;
+    return expectJson<Group>(response);
   },
 
   async getGroup(input) {
-    await randomDelay();
+    const response = await apiClient.groups[":groupId"].$get({
+      param: { groupId: input.id },
+    });
 
-    const groups = loadGroups();
-    const group = groups.find((item) => item.id === input.id);
+    return expectJson<Group>(response);
+  },
 
-    if (!group) {
-      throw new Error("Group not found.");
-    }
+  async updateGroupSettings(input) {
+    const response = await apiClient.groups[":groupId"].settings.$patch({
+      param: { groupId: input.groupId },
+      json: {
+        removeWinnerAfterSpin: input.settings.removeWinnerAfterSpin,
+      },
+    });
 
-    return group;
+    return expectJson<GameSettings>(response);
   },
 
   async listParticipants(input) {
-    await randomDelay();
-    return loadParticipants(input.groupId);
+    const response = await apiClient.groups[":groupId"].participants.$get({
+      param: { groupId: input.groupId },
+    });
+
+    return expectJson<Participant[]>(response);
   },
 
   async addParticipant(input) {
-    await randomDelay();
+    const response = await apiClient.groups[":groupId"].participants.$post({
+      param: { groupId: input.groupId },
+      json: {
+        name: input.name,
+      },
+    });
 
-    const name = validateName(input.name);
-    const participants = loadParticipants(input.groupId);
-
-    if (
-      participants.some(
-        (participant) =>
-          participant.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
-      )
-    ) {
-      throw new Error("Participant with this name already exists.");
-    }
-
-    const participant: Participant = {
-      id: randomId(),
-      name,
-      active: true,
-    };
-
-    participants.push(participant);
-    saveParticipants(input.groupId, participants);
-
-    return participant;
+    return expectJson<Participant>(response);
   },
 
   async removeParticipant(input) {
-    await randomDelay();
-
-    const participants = loadParticipants(input.groupId).filter(
-      (participant) => participant.id !== input.participantId,
+    const response = await apiClient.groups[":groupId"].participants[":participantId"].$delete(
+      {
+        param: {
+          groupId: input.groupId,
+          participantId: input.participantId,
+        },
+      },
     );
 
-    saveParticipants(input.groupId, participants);
+    if (!response.ok) {
+      throw new ApiError(await readError(response), response.status);
+    }
   },
 
   async setParticipantActive(input) {
-    await randomDelay();
+    const response = await apiClient.groups[":groupId"].participants[":participantId"].$patch(
+      {
+        param: {
+          groupId: input.groupId,
+          participantId: input.participantId,
+        },
+        json: {
+          active: input.active,
+        },
+      },
+    );
 
-    const participants = loadParticipants(input.groupId);
-    const participant = participants.find((item) => item.id === input.participantId);
-
-    if (!participant) {
-      throw new Error("Participant not found.");
-    }
-
-    participant.active = input.active;
-    saveParticipants(input.groupId, participants);
-
-    return participant;
+    return expectJson<Participant>(response);
   },
 };
 
-// Swap this instance with real backend wiring when API routes are available.
-export const groupsApi: GroupsApi = mockGroupsApi;
+export const groupsApi: GroupsApi = httpGroupsApi;

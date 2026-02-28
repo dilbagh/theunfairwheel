@@ -1,24 +1,8 @@
-import { Hono } from "hono";
-import { cors } from "hono/cors";
+import { app, routes } from "./app";
 
-type Bindings = {
-  FRONTEND_URL: string;
-};
-
-const app = new Hono<{ Bindings: Bindings }>();
-
-app.use("/*", (c, next) => {
-  const frontendUrl = c.env.FRONTEND_URL;
-  return cors({ origin: frontendUrl })(c, next);
-});
-
-export const routes = app.get("/health", (c) => {
-  return c.json({
-    ok: true,
-    service: "backend",
-    timestamp: new Date().toISOString(),
-  });
-});
+export { GroupDurableObject } from "./durable/group-do";
+export type { Group, GroupSettings, Participant } from "./domain/group";
+export type { Bindings } from "./types";
 
 export type AppType = typeof routes;
 

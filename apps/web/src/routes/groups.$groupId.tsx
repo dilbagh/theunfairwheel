@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { audioEngine } from "../lib/audio";
-import { groupsApi, type Participant } from "../lib/groups";
-import { setLastGroupId } from "../lib/storage";
+import { ApiError, groupsApi, type Participant } from "../lib/groups";
+import { clearLastGroupId, setLastGroupId } from "../lib/storage";
 import {
   activeParticipants,
   pickSpinTarget,
@@ -25,13 +25,10 @@ function GroupPage() {
   const [isSpinning, setIsSpinning] = useState(false);
   const [winner, setWinner] = useState<Participant | null>(null);
   const [removeWinnerAfterSpin, setRemoveWinnerAfterSpin] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(audioEngine.isMuted());
   const timeoutRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    setLastGroupId(groupId);
-  }, [groupId]);
 
   useEffect(() => {
     return () => {
@@ -48,6 +45,13 @@ function GroupPage() {
   const groupQuery = useQuery({
     queryKey: ["groups", groupId],
     queryFn: () => groupsApi.getGroup({ id: groupId }),
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status === 404) {
+        return false;
+      }
+
+      return failureCount < 3;
+    },
   });
 
   const participantsQuery = useQuery({
@@ -60,6 +64,18 @@ function GroupPage() {
     [participantsQuery.data],
   );
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
+
+  useEffect(() => {
+    if (groupQuery.data?.settings) {
+      setRemoveWinnerAfterSpin(groupQuery.data.settings.removeWinnerAfterSpin);
+    }
+  }, [groupQuery.data]);
+
+  useEffect(() => {
+    if (groupQuery.data?.id) {
+      setLastGroupId(groupQuery.data.id);
+    }
+  }, [groupQuery.data]);
 
   const addMutation = useMutation({
     mutationFn: (name: string) => groupsApi.addParticipant({ groupId, name }),
@@ -86,6 +102,25 @@ function GroupPage() {
       groupsApi.setParticipantActive({ groupId, participantId, active }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
+    },
+  });
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: (nextValue: boolean) =>
+      groupsApi.updateGroupSettings({
+        groupId,
+        settings: { removeWinnerAfterSpin: nextValue },
+      }),
+    onSuccess: async (settings) => {
+      setSettingsError(null);
+      queryClient.setQueryData(
+        ["groups", groupId],
+        (current: Awaited<ReturnType<typeof groupsApi.getGroup>> | undefined) =>
+          current ? { ...current, settings } : current,
+      );
+    },
+    onError: (error: Error) => {
+      setSettingsError(error.message);
     },
   });
 
@@ -156,8 +191,14 @@ function GroupPage() {
     return (
       <section className="center-panel">
         <h1>Group Not Found</h1>
-        <p className="muted-text">This group id has no mock record yet.</p>
-        <Link className="primary-btn link-btn" to="/">
+        <p className="muted-text">This group id does not exist.</p>
+        <Link
+          className="primary-btn link-btn"
+          to="/"
+          onClick={() => {
+            clearLastGroupId();
+          }}
+        >
           Create a new group
         </Link>
       </section>
@@ -219,10 +260,21 @@ function GroupPage() {
             <input
               type="checkbox"
               checked={removeWinnerAfterSpin}
-              onChange={(event) => setRemoveWinnerAfterSpin(event.target.checked)}
+              onChange={(event) => {
+                const nextValue = event.target.checked;
+                setRemoveWinnerAfterSpin(nextValue);
+                setSettingsError(null);
+                updateSettingsMutation.mutate(nextValue, {
+                  onError: () => {
+                    setRemoveWinnerAfterSpin(!nextValue);
+                  },
+                });
+              }}
+              disabled={updateSettingsMutation.isPending}
             />
             Remove winner after spin
           </label>
+          {settingsError && <p className="error-text">{settingsError}</p>}
 
           <ul className="participant-list">
             {participants.length === 0 && <li className="muted-text">No participants yet.</li>}
