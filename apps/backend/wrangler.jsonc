@@ -1,0 +1,8 @@
+{
+  "name": "theunfairwheel-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-02-28",
+  "vars": {
+    "FRONTEND_URL": "http://localhost:3000"
+  }
+}

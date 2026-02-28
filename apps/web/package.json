@@ -1,0 +1,36 @@
+{
+  "name": "@repo/web",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite --port 3000",
+    "build": "vite build",
+    "start": "vite preview --port 3000",
+    "router:generate": "tsr generate",
+    "lint": "eslint --max-warnings 0",
+    "check-types": "pnpm run router:generate && tsc --noEmit"
+  },
+  "dependencies": {
+    "@repo/ui": "workspace:^",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-router": "^1.132.24",
+    "hono": "^4.12.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@repo/backend": "workspace:^",
+    "@repo/eslint-config": "workspace:^",
+    "@repo/typescript-config": "workspace:^",
+    "@tanstack/router-cli": "^1.132.24",
+    "@tanstack/router-plugin": "^1.132.24",
+    "@types/node": "^22.15.3",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "eslint": "^9.39.1",
+    "typescript": "5.9.2",
+    "vite": "^7.1.12"
+  }
+}
