@@ -18,6 +18,8 @@ type GroupState = {
   spin: GroupSpinState;
   spinHistory: SpinHistoryItem[];
   pendingResultSpinId: string | null;
+  pendingResultCounters: Record<string, number> | null;
+  pendingResultExpiresAt: string | null;
 };
 
 type ErrorBody = {
@@ -26,7 +28,16 @@ type ErrorBody = {
 
 const GROUP_STATE_KEY = "group-state";
 const MAX_SPIN_HISTORY_ITEMS = 20;
+const PENDING_RESULT_TTL_MS = 10 * 60 * 1000;
 type CloudflareWebSocket = WebSocket & { accept(): void };
+
+type ParticipantLike = Omit<Participant, "spinsSinceLastWon"> & {
+  spinsSinceLastWon?: unknown;
+};
+
+type SpinHistoryItemLike = Omit<SpinHistoryItem, "participants"> & {
+  participants?: ParticipantLike[];
+};
 
 const DEFAULT_SPIN_STATE: GroupSpinState = {
   status: "idle",
@@ -50,21 +61,58 @@ function cloneSpinState(state: GroupSpinState): GroupSpinState {
   };
 }
 
-function cloneParticipants(participants: Participant[]): Participant[] {
-  return participants.map((participant) => ({ ...participant }));
+function cloneParticipants(participants: ParticipantLike[]): Participant[] {
+  return participants.map((participant) => normalizeParticipant(participant));
 }
 
-function cloneSpinHistoryItem(item: SpinHistoryItem): SpinHistoryItem {
+function normalizeParticipant(participant: ParticipantLike): Participant {
+  return {
+    ...participant,
+    spinsSinceLastWon:
+      typeof participant.spinsSinceLastWon === "number" &&
+      Number.isFinite(participant.spinsSinceLastWon) &&
+      participant.spinsSinceLastWon >= 0
+        ? Math.floor(participant.spinsSinceLastWon)
+        : 0,
+  };
+}
+
+function cloneSpinHistoryItem(item: SpinHistoryItemLike): SpinHistoryItem {
   return {
     id: item.id,
     createdAt: item.createdAt,
     winnerParticipantId: item.winnerParticipantId,
-    participants: cloneParticipants(item.participants),
+    participants: cloneParticipants(item.participants ?? []),
   };
 }
 
-function cloneSpinHistory(items: SpinHistoryItem[]): SpinHistoryItem[] {
+function cloneSpinHistory(items: SpinHistoryItemLike[]): SpinHistoryItem[] {
   return items.map((item) => cloneSpinHistoryItem(item));
+}
+
+function participantWeight(participant: Participant): number {
+  return Math.max(1, participant.spinsSinceLastWon + 1);
+}
+
+function pickWeightedWinner(participants: Participant[]): Participant | null {
+  let totalWeight = 0;
+  for (const participant of participants) {
+    totalWeight += participantWeight(participant);
+  }
+
+  if (!Number.isFinite(totalWeight) || totalWeight <= 0) {
+    return null;
+  }
+
+  let draw = Math.random() * totalWeight;
+  for (const participant of participants) {
+    draw -= participantWeight(participant);
+    if (draw < 0) {
+      return participant;
+    }
+  }
+
+  return participants[participants.length - 1] ?? null;
 }
 
 export class GroupDurableObject {
@@ -93,6 +141,8 @@ export class GroupDurableObject {
           spin: cloneSpinState(DEFAULT_SPIN_STATE),
           spinHistory: [],
           pendingResultSpinId: null,
+          pendingResultCounters: null,
+          pendingResultExpiresAt: null,
         };
 
         await this.state.storage.put(GROUP_STATE_KEY, nextState);
@@ -159,6 +209,7 @@ export class GroupDurableObject {
           id: randomId(),
           name,
           active: true,
+          spinsSinceLastWon: 0,
         };
 
         current.participants.push(participant);
@@ -192,8 +243,7 @@ export class GroupDurableObject {
           return this.error(409, "Need at least 2 active participants to spin.");
         }
 
-        const winner =
-          eligibleParticipants[Math.floor(Math.random() * eligibleParticipants.length)] ?? null;
+        const winner = pickWeightedWinner(eligibleParticipants);
         if (!winner) {
           return this.error(500, "Unable to resolve winner.");
         }
@@ -256,6 +306,8 @@ export class GroupDurableObject {
 
         if (current.pendingResultSpinId === spinId) {
           current.pendingResultSpinId = null;
+          current.pendingResultCounters = null;
+          current.pendingResultExpiresAt = null;
           const next = await this.bumpAndSave(current);
           this.broadcast({
             type: "spin.result.dismissed",
@@ -283,14 +335,49 @@ export class GroupDurableObject {
           return this.error(400, "Spin id is required.");
         }
 
-        const hadPendingResult = current.pendingResultSpinId === spinId;
+        const nowTs = Date.now();
+        const pendingExpiryTs = current.pendingResultExpiresAt
+          ? Date.parse(current.pendingResultExpiresAt)
+          : Number.NaN;
+        const isPendingExpired =
+          Number.isFinite(pendingExpiryTs) && pendingExpiryTs > 0 && pendingExpiryTs < nowTs;
+        const hadPendingResult =
+          current.pendingResultSpinId === spinId &&
+          !isPendingExpired &&
+          current.pendingResultCounters !== null;
+
+        const revertedParticipants: Participant[] = [];
+        if (hadPendingResult && current.pendingResultCounters) {
+          for (const participant of current.participants) {
+            const previousCounter = current.pendingResultCounters[participant.id];
+            if (typeof previousCounter === "number" && Number.isFinite(previousCounter)) {
+              participant.spinsSinceLastWon = Math.max(0, Math.floor(previousCounter));
+              revertedParticipants.push({ ...participant });
+            }
+          }
+        }
+
         current.spinHistory = current.spinHistory.filter((item) => item.id !== spinId);
-        if (hadPendingResult) {
+        if (current.pendingResultSpinId === spinId || isPendingExpired) {
           current.pendingResultSpinId = null;
+          current.pendingResultCounters = null;
+          current.pendingResultExpiresAt = null;
         }
         const next = await this.bumpAndSave(current);
 
         if (hadPendingResult) {
+          for (const participant of revertedParticipants) {
+            this.broadcast({
+              type: "participant.updated",
+              groupId: next.group.id,
+              version: next.version,
+              ts: new Date().toISOString(),
+              payload: {
+                participant,
+              },
+            });
+          }
+
           this.broadcast({
             type: "spin.result.dismissed",
             groupId: next.group.id,
@@ -449,6 +536,23 @@ export class GroupDurableObject {
       status: "idle",
       resolvedAt,
     };
+
+    const previousCounters: Record<string, number> = {};
+    const updatedParticipants: Participant[] = [];
+    for (const participant of current.participants) {
+      if (!participant.active) {
+        continue;
+      }
+
+      previousCounters[participant.id] = participant.spinsSinceLastWon;
+      if (participant.id === winnerParticipantId) {
+        participant.spinsSinceLastWon = 0;
+      } else {
+        participant.spinsSinceLastWon += 1;
+      }
+      updatedParticipants.push({ ...participant });
+    }
+
     current.spinHistory.push({
       id: completedSpinId,
       createdAt: resolvedAt,
@@ -459,6 +563,8 @@ export class GroupDurableObject {
     });
     current.spinHistory = current.spinHistory.slice(-MAX_SPIN_HISTORY_ITEMS);
     current.pendingResultSpinId = completedSpinId;
+    current.pendingResultCounters = previousCounters;
+    current.pendingResultExpiresAt = new Date(Date.now() + PENDING_RESULT_TTL_MS).toISOString();
 
     current.version += 1;
     await this.saveState(current);
@@ -472,6 +578,18 @@ export class GroupDurableObject {
         spin: cloneSpinState(current.spin),
       },
     });
+
+    for (const participant of updatedParticipants) {
+      this.broadcast({
+        type: "participant.updated",
+        groupId: current.group.id,
+        version: current.version,
+        ts: new Date().toISOString(),
+        payload: {
+          participant,
+        },
+      });
+    }
   }
 
   private send(socket: WebSocket, event: GroupRealtimeEvent, clientId?: string): void {
@@ -503,11 +621,23 @@ export class GroupDurableObject {
 
     return {
       ...data,
-      participants: cloneParticipants(data.participants ?? []),
+      participants: cloneParticipants((data.participants ?? []) as ParticipantLike[]),
       version: typeof data.version === "number" ? data.version : 0,
       spin: data.spin ? cloneSpinState(data.spin) : cloneSpinState(DEFAULT_SPIN_STATE),
-      spinHistory: cloneSpinHistory(data.spinHistory ?? []),
+      spinHistory: cloneSpinHistory((data.spinHistory ?? []) as SpinHistoryItemLike[]),
       pendingResultSpinId: data.pendingResultSpinId ?? null,
+      pendingResultCounters:
+        data.pendingResultCounters && typeof data.pendingResultCounters === "object"
+          ? Object.fromEntries(
+              Object.entries(data.pendingResultCounters).flatMap(([participantId, count]) =>
+                typeof count === "number" && Number.isFinite(count)
+                  ? [[participantId, Math.max(0, Math.floor(count))]]
+                  : [],
+              ),
+            )
+          : null,
+      pendingResultExpiresAt:
+        typeof data.pendingResultExpiresAt === "string" ? data.pendingResultExpiresAt : null,
     };
   }
 

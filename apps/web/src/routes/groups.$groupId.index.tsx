@@ -11,7 +11,7 @@ import {
   type Participant,
 } from "../lib/groups";
 import { clearLastGroupId, setLastGroupId } from "../lib/storage";
-import { activeParticipants, rotationForWinner, segmentColor } from "../lib/wheel";
+import { activeParticipants, rotationForWinner, segmentColor, weightedSegments } from "../lib/wheel";
 
 export const Route = createFileRoute("/groups/$groupId/")({
   component: GroupPage,
@@ -151,6 +151,10 @@ function GroupPage() {
 
   const participants = useMemo(() => participantsQuery.data ?? [], [participantsQuery.data]);
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
+  const wheelSegments = useMemo(
+    () => weightedSegments(eligibleParticipants),
+    [eligibleParticipants],
+  );
 
   useEffect(() => {
     rotationRef.current = rotation;
@@ -195,11 +199,8 @@ function GroupPage() {
     const latestParticipants =
       queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
     const latestActive = activeParticipants(latestParticipants);
-    const winnerIndex = latestActive.findIndex(
-      (participant) => participant.id === spin.winnerParticipantId,
-    );
-
-    if (winnerIndex < 0) {
+    const segments = weightedSegments(latestActive);
+    if (!segments.some((segment) => segment.participantId === spin.winnerParticipantId)) {
       return;
     }
 
@@ -213,8 +214,8 @@ function GroupPage() {
 
     const targetRotation = rotationForWinner(
       rotationRef.current,
-      latestActive.length,
-      winnerIndex,
+      segments,
+      spin.winnerParticipantId,
       spin.extraTurns,
     );
 
@@ -235,7 +236,7 @@ function GroupPage() {
   };
 
   const applyRealtimeEvent = (event: GroupRealtimeEvent) => {
-    if (event.type !== "snapshot" && event.version <= lastVersionRef.current) {
+    if (event.type !== "snapshot" && event.version < lastVersionRef.current) {
       return;
     }
 
@@ -377,6 +378,7 @@ function GroupPage() {
         id: optimisticId,
         name,
         active: true,
+        spinsSinceLastWon: 0,
       };
 
       queryClient.setQueryData<Participant[]>(["participants", groupId], [
@@ -483,6 +485,7 @@ function GroupPage() {
       setSpinError(error.message);
     },
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
       await queryClient.invalidateQueries({ queryKey: ["spin-history", groupId] });
     },
   });
@@ -491,6 +494,9 @@ function GroupPage() {
     mutationFn: (spinId: string) => groupsApi.saveSpinHistoryItem({ groupId, spinId }),
     onError: (error: Error) => {
       setSpinError(error.message);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
     },
   });
 
@@ -545,9 +551,6 @@ function GroupPage() {
   if (!group) {
     return <p className="status-text">Group unavailable.</p>;
   }
-
-  const wheelCount = Math.max(eligibleParticipants.length, 1);
-  const degrees = 360 / wheelCount;
 
   return (
     <section className="game-layout reveal-up">
@@ -632,9 +635,14 @@ function GroupPage() {
                   </span>
                   <span>{participant.active ? "Present" : "Absent"}</span>
                 </button>
-                <span className={`participant-name ${participant.active ? "" : "inactive-name"}`}>
-                  {participant.name}
-                </span>
+                <div className="participant-meta">
+                  <span className={`participant-name ${participant.active ? "" : "inactive-name"}`}>
+                    {participant.name}
+                  </span>
+                  <span className="participant-counter">
+                    Spins since win: {participant.spinsSinceLastWon}
+                  </span>
+                </div>
                 <button
                   type="button"
                   className="danger-btn icon-btn remove-btn"
@@ -671,15 +679,20 @@ function GroupPage() {
                   </>
                 )}
                 {eligibleParticipants.map((participant, index) => {
-                  const start = index * degrees;
-                  const end = start + degrees;
-                  const largeArc = degrees > 180 ? 1 : 0;
+                  const segment = wheelSegments[index];
+                  if (!segment) {
+                    return null;
+                  }
+
+                  const largeArc = segment.sweep > 180 ? 1 : 0;
+                  const start = segment.startAngle;
+                  const end = segment.endAngle;
                   const sx = Math.cos((Math.PI / 180) * start) * 190;
                   const sy = Math.sin((Math.PI / 180) * start) * 190;
                   const ex = Math.cos((Math.PI / 180) * end) * 190;
                   const ey = Math.sin((Math.PI / 180) * end) * 190;
                   const path = `M 0 0 L ${sx} ${sy} A 190 190 0 ${largeArc} 1 ${ex} ${ey} Z`;
-                  const labelAngle = start + degrees / 2;
+                  const labelAngle = segment.midAngle;
                   const tx = Math.cos((Math.PI / 180) * labelAngle) * 120;
                   const ty = Math.sin((Math.PI / 180) * labelAngle) * 120;
 

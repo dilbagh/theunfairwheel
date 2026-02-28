@@ -3,64 +3,71 @@ import type { Participant } from "./groups";
 const FULL_CIRCLE = 360;
 const POINTER_ANGLE = 270;
 
+export type WheelSegment = {
+  participantId: string;
+  startAngle: number;
+  endAngle: number;
+  midAngle: number;
+  sweep: number;
+  weight: number;
+};
+
 export function activeParticipants(participants: Participant[]): Participant[] {
   return participants.filter((participant) => participant.active);
 }
 
-export function anglePerSegment(count: number): number {
-  return FULL_CIRCLE / Math.max(count, 1);
+export function participantWeight(participant: Participant): number {
+  return Math.max(1, participant.spinsSinceLastWon + 1);
 }
 
-export function winnerIndexFromRotation(rotationDeg: number, count: number): number {
-  if (count <= 0) {
-    return -1;
+export function weightedSegments(participants: Participant[]): WheelSegment[] {
+  if (participants.length === 0) {
+    return [];
   }
 
-  const normalized = ((rotationDeg % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
-  const pointerOnWheel = ((POINTER_ANGLE - normalized) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
-  const index = Math.floor(pointerOnWheel / anglePerSegment(count));
+  const weights = participants.map((participant) => participantWeight(participant));
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(totalWeight) || totalWeight <= 0) {
+    return [];
+  }
 
-  return Math.max(0, Math.min(count - 1, index));
-}
-
-export function pickSpinTarget(currentRotation: number, count: number): {
-  targetRotation: number;
-  winnerIndex: number;
-  durationMs: number;
-} {
-  const winnerIndex = Math.floor(Math.random() * count);
-  const segmentAngle = anglePerSegment(count);
-  const targetWithinCircle =
-    ((POINTER_ANGLE - (winnerIndex + 0.5) * segmentAngle) % FULL_CIRCLE + FULL_CIRCLE) %
-    FULL_CIRCLE;
-  const currentMod = ((currentRotation % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
-  const offset = ((targetWithinCircle - currentMod) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
-  const extraTurns = 6 + Math.floor(Math.random() * 3);
-  const targetRotation = currentRotation + extraTurns * FULL_CIRCLE + offset;
-  const durationMs = 4000 + Math.floor(Math.random() * 2000);
-
-  return {
-    targetRotation,
-    winnerIndex,
-    durationMs,
-  };
+  let cursor = 0;
+  return participants.map((participant, index) => {
+    const weight = weights[index] ?? 1;
+    const isLast = index === participants.length - 1;
+    const sweep = isLast ? FULL_CIRCLE - cursor : (weight / totalWeight) * FULL_CIRCLE;
+    const startAngle = cursor;
+    const endAngle = cursor + sweep;
+    const midAngle = startAngle + sweep / 2;
+    cursor = endAngle;
+    return {
+      participantId: participant.id,
+      startAngle,
+      endAngle,
+      midAngle,
+      sweep,
+      weight,
+    };
+  });
 }
 
 export function rotationForWinner(
   currentRotation: number,
-  count: number,
-  winnerIndex: number,
+  segments: WheelSegment[],
+  winnerParticipantId: string,
   extraTurns: number,
 ): number {
-  if (count <= 0) {
+  if (segments.length <= 0) {
     return currentRotation;
   }
 
-  const clampedIndex = Math.max(0, Math.min(count - 1, winnerIndex));
-  const segmentAngle = anglePerSegment(count);
+  const winnerSegment = segments.find((segment) => segment.participantId === winnerParticipantId);
+  if (!winnerSegment) {
+    return currentRotation;
+  }
+
   const targetWithinCircle =
-    ((POINTER_ANGLE - (clampedIndex + 0.5) * segmentAngle) % FULL_CIRCLE + FULL_CIRCLE) %
-    FULL_CIRCLE;
+    ((POINTER_ANGLE - winnerSegment.midAngle) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
   const currentMod = ((currentRotation % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
   const offset = ((targetWithinCircle - currentMod) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
 

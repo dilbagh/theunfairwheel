@@ -10,6 +10,7 @@ export type Participant = {
   id: string;
   name: string;
   active: boolean;
+  spinsSinceLastWon: number;
 };
 
 export function normalizeName(name: string): string {

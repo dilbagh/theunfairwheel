@@ -383,6 +383,17 @@ input[type="checkbox"]:focus-visible {
   min-width: 0;
 }
 
+.participant-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.participant-counter {
+  font-size: 0.74rem;
+  color: #8eb0c3;
+}
+
 .inactive-name {
   color: #7e96a8;
   text-decoration: line-through;

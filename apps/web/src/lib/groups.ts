@@ -15,6 +15,7 @@ export type Participant = {
   id: string;
   name: string;
   active: boolean;
+  spinsSinceLastWon: number;
 };
 
 export type GroupsApi = {
