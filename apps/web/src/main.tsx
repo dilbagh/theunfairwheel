@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { createRoot } from "react-dom/client";
 import { router } from "./router";
+import "./styles.css";
 
 const rootEl = document.getElementById("app");
 const queryClient = new QueryClient();

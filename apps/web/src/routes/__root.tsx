@@ -1,4 +1,4 @@
-import { Link, Outlet, createRootRoute } from "@tanstack/react-router";
+import { Outlet, createRootRoute } from "@tanstack/react-router";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -6,11 +6,12 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
-    <main>
-      <nav>
-        <Link to="/">Home</Link>
-      </nav>
-      <Outlet />
-    </main>
+    <div className="app-shell">
+      <div className="bg-layer bg-layer-one" aria-hidden />
+      <div className="bg-layer bg-layer-two" aria-hidden />
+      <main className="page-wrap">
+        <Outlet />
+      </main>
+    </div>
   );
 }
