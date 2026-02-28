@@ -1,7 +1,7 @@
 import type { Participant } from "./groups";
 
 const FULL_CIRCLE = 360;
-const POINTER_ANGLE = -90;
+const POINTER_ANGLE = 270;
 
 export function activeParticipants(participants: Participant[]): Participant[] {
   return participants.filter((participant) => participant.active);
@@ -17,7 +17,7 @@ export function winnerIndexFromRotation(rotationDeg: number, count: number): num
   }
 
   const normalized = ((rotationDeg % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
-  const pointerOnWheel = (FULL_CIRCLE - normalized + POINTER_ANGLE + FULL_CIRCLE) % FULL_CIRCLE;
+  const pointerOnWheel = ((POINTER_ANGLE - normalized) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
   const index = Math.floor(pointerOnWheel / anglePerSegment(count));
 
   return Math.max(0, Math.min(count - 1, index));
@@ -31,7 +31,8 @@ export function pickSpinTarget(currentRotation: number, count: number): {
   const winnerIndex = Math.floor(Math.random() * count);
   const segmentAngle = anglePerSegment(count);
   const targetWithinCircle =
-    FULL_CIRCLE - POINTER_ANGLE - (winnerIndex + 0.5) * segmentAngle;
+    ((POINTER_ANGLE - (winnerIndex + 0.5) * segmentAngle) % FULL_CIRCLE + FULL_CIRCLE) %
+    FULL_CIRCLE;
   const currentMod = ((currentRotation % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
   const offset = ((targetWithinCircle - currentMod) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
   const extraTurns = 6 + Math.floor(Math.random() * 3);
@@ -58,7 +59,8 @@ export function rotationForWinner(
   const clampedIndex = Math.max(0, Math.min(count - 1, winnerIndex));
   const segmentAngle = anglePerSegment(count);
   const targetWithinCircle =
-    FULL_CIRCLE - POINTER_ANGLE - (clampedIndex + 0.5) * segmentAngle;
+    ((POINTER_ANGLE - (clampedIndex + 0.5) * segmentAngle) % FULL_CIRCLE + FULL_CIRCLE) %
+    FULL_CIRCLE;
   const currentMod = ((currentRotation % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
   const offset = ((targetWithinCircle - currentMod) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
 
