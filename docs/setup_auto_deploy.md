@@ -11,8 +11,9 @@ When you push to `main`, GitHub Actions will:
 1. Install dependencies.
 2. Build the frontend with `VITE_API_URL` from GitHub Secrets.
 3. Deploy `apps/web/dist` to Cloudflare Pages.
-4. Deploy the Worker from `apps/backend/wrangler.jsonc`.
-5. Set Worker `FRONTEND_URL` from GitHub Secrets for CORS.
+4. Generate `apps/backend/wrangler.deploy.jsonc` from `apps/backend/wrangler.jsonc` by injecting KV namespace IDs from GitHub Secrets.
+5. Deploy the Worker using the generated deploy config.
+6. Set Worker `FRONTEND_URL` from GitHub Secrets for CORS.
 
 ## 2. Create Cloudflare resources (Dashboard)
 
@@ -47,6 +48,24 @@ Note: GitHub Actions deploy uses Wrangler and can create/update from `apps/backe
 
 You will use it as `CLOUDFLARE_ACCOUNT_ID`.
 
+### 2.4 Create KV namespaces for backend metadata index
+
+The backend Worker binds a KV namespace (`GROUP_INDEX_KV`) for non-group metadata.
+
+Create production namespace:
+```bash
+pnpm dlx wrangler@4.44.0 kv namespace create GROUP_INDEX_KV
+```
+
+Create preview namespace:
+```bash
+pnpm dlx wrangler@4.44.0 kv namespace create GROUP_INDEX_KV --preview
+```
+
+From command output, copy:
+- Production `id` -> `GROUP_INDEX_KV_ID`
+- Preview `id` -> `GROUP_INDEX_KV_PREVIEW_ID`
+
 ## 3. Create a Cloudflare API Token
 
 Create one token that can deploy both Pages and Worker.
@@ -79,6 +98,8 @@ Required secrets:
 - `CLOUDFLARE_PAGES_PROJECT_NAME`
 - `PROD_API_URL`
 - `PROD_FRONTEND_URL`
+- `GROUP_INDEX_KV_ID`
+- `GROUP_INDEX_KV_PREVIEW_ID`
 
 Recommended value format:
 - `PROD_FRONTEND_URL`: `https://<project>.pages.dev`
@@ -113,7 +134,7 @@ It deploys on:
 
 It uses:
 - `pnpm dlx wrangler@4.44.0 pages deploy ...` for Pages deployment
-- `pnpm dlx wrangler@4.44.0 deploy ...` for Worker deployment
+- `pnpm dlx wrangler@4.44.0 deploy ...` for Worker deployment (with generated `wrangler.deploy.jsonc`)
 
 `cloudflare/pages-action` is not used because it is deprecated.
 
@@ -170,6 +191,21 @@ Likely cause:
 Fix:
 1. Check exact project name in Cloudflare Pages.
 2. Update secret.
+3. Re-run workflow.
+
+### Error: KV namespace is not valid (code: 10042)
+
+Likely cause:
+- `GROUP_INDEX_KV_ID` and/or `GROUP_INDEX_KV_PREVIEW_ID` is missing or incorrect
+- KV namespace was not created in the target account
+
+Fix:
+1. Recreate/check KV namespaces:
+   - `pnpm dlx wrangler@4.44.0 kv namespace create GROUP_INDEX_KV`
+   - `pnpm dlx wrangler@4.44.0 kv namespace create GROUP_INDEX_KV --preview`
+2. Update GitHub secrets:
+   - `GROUP_INDEX_KV_ID`
+   - `GROUP_INDEX_KV_PREVIEW_ID`
 3. Re-run workflow.
 
 ### Error: Wrangler install fails inside action (npm/pnpm errors)
