@@ -112,6 +112,46 @@ const groupsRoutes = new Hono<AppEnv>()
 
     return c.json(await response.json(), 202);
   })
+  .get("/groups/:groupId/history", async (c) => {
+    const groupId = c.req.param("groupId");
+    const response = await callDurableObject(groupStub(c, groupId), "/history");
+
+    if (!response.ok) {
+      return c.json({ error: await parseError(response) }, response.status as 404 | 500);
+    }
+
+    return c.json(await response.json());
+  })
+  .delete("/groups/:groupId/history/:spinId", async (c) => {
+    const groupId = c.req.param("groupId");
+    const spinId = c.req.param("spinId");
+    const response = await callDurableObject(
+      groupStub(c, groupId),
+      `/history/${spinId}`,
+      { method: "DELETE" },
+    );
+
+    if (!response.ok) {
+      return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
+    }
+
+    return c.body(null, 204);
+  })
+  .post("/groups/:groupId/history/:spinId/save", async (c) => {
+    const groupId = c.req.param("groupId");
+    const spinId = c.req.param("spinId");
+    const response = await callDurableObject(
+      groupStub(c, groupId),
+      `/history/${spinId}/save`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
+    }
+
+    return c.body(null, 204);
+  })
   .get("/groups/:groupId/participants", async (c) => {
     const groupId = c.req.param("groupId");
     const response = await callDurableObject(groupStub(c, groupId), "/participants");

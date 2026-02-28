@@ -1,5 +1,12 @@
 import type { Group, Participant } from "./group";
 
+export type SpinHistoryItem = {
+  id: string;
+  createdAt: string;
+  participants: Participant[];
+  winnerParticipantId: string;
+};
+
 export type GroupSpinState = {
   status: "idle" | "spinning";
   spinId: string | null;
@@ -62,10 +69,19 @@ export type SpinResolvedEvent = EventEnvelope<
   }
 >;
 
+export type SpinResultDismissedEvent = EventEnvelope<
+  "spin.result.dismissed",
+  {
+    spinId: string;
+    action: "save" | "discard";
+  }
+>;
+
 export type GroupRealtimeEvent =
   | GroupSnapshotEvent
   | ParticipantAddedEvent
   | ParticipantUpdatedEvent
   | ParticipantRemovedEvent
   | SpinStartedEvent
-  | SpinResolvedEvent;
+  | SpinResolvedEvent
+  | SpinResultDismissedEvent;

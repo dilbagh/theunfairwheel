@@ -1,4 +1,8 @@
-import type { GroupRealtimeEvent, GroupSpinState } from "@repo/backend";
+import type {
+  GroupRealtimeEvent,
+  GroupSpinState,
+  SpinHistoryItem,
+} from "@repo/backend";
 import { apiClient } from "./api-client";
 
 export type Group = {
@@ -17,6 +21,9 @@ export type GroupsApi = {
   createGroup(input: { name: string }): Promise<Group>;
   getGroup(input: { id: string }): Promise<Group>;
   requestSpin(input: { groupId: string }): Promise<{ spin: GroupSpinState }>;
+  listSpinHistory(input: { groupId: string }): Promise<SpinHistoryItem[]>;
+  saveSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
+  discardSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
   listParticipants(input: { groupId: string }): Promise<Participant[]>;
   addParticipant(input: { groupId: string; name: string }): Promise<Participant>;
   removeParticipant(input: {
@@ -84,6 +91,40 @@ const httpGroupsApi: GroupsApi = {
     });
 
     return expectJson<{ spin: GroupSpinState }>(response);
+  },
+
+  async listSpinHistory(input) {
+    const response = await apiClient.groups[":groupId"].history.$get({
+      param: { groupId: input.groupId },
+    });
+
+    return expectJson<SpinHistoryItem[]>(response);
+  },
+
+  async saveSpinHistoryItem(input) {
+    const response = await apiClient.groups[":groupId"].history[":spinId"].save.$post({
+      param: {
+        groupId: input.groupId,
+        spinId: input.spinId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new ApiError(await readError(response), response.status);
+    }
+  },
+
+  async discardSpinHistoryItem(input) {
+    const response = await apiClient.groups[":groupId"].history[":spinId"].$delete({
+      param: {
+        groupId: input.groupId,
+        spinId: input.spinId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new ApiError(await readError(response), response.status);
+    }
   },
 
   async listParticipants(input) {

@@ -4,7 +4,11 @@ import {
   type Participant,
   validateName,
 } from "../domain/group";
-import type { GroupRealtimeEvent, GroupSpinState } from "../domain/realtime";
+import type {
+  GroupRealtimeEvent,
+  GroupSpinState,
+  SpinHistoryItem,
+} from "../domain/realtime";
 import type { Bindings, DurableObjectStateLike } from "../types";
 
 type GroupState = {
@@ -12,6 +16,8 @@ type GroupState = {
   participants: Participant[];
   version: number;
   spin: GroupSpinState;
+  spinHistory: SpinHistoryItem[];
+  pendingResultSpinId: string | null;
 };
 
 type ErrorBody = {
@@ -19,6 +25,7 @@ type ErrorBody = {
 };
 
 const GROUP_STATE_KEY = "group-state";
+const MAX_SPIN_HISTORY_ITEMS = 20;
 type CloudflareWebSocket = WebSocket & { accept(): void };
 
 const DEFAULT_SPIN_STATE: GroupSpinState = {
@@ -41,6 +48,23 @@ function cloneSpinState(state: GroupSpinState): GroupSpinState {
     durationMs: state.durationMs,
     extraTurns: state.extraTurns,
   };
+}
+
+function cloneParticipants(participants: Participant[]): Participant[] {
+  return participants.map((participant) => ({ ...participant }));
+}
+
+function cloneSpinHistoryItem(item: SpinHistoryItem): SpinHistoryItem {
+  return {
+    id: item.id,
+    createdAt: item.createdAt,
+    winnerParticipantId: item.winnerParticipantId,
+    participants: cloneParticipants(item.participants),
+  };
+}
+
+function cloneSpinHistory(items: SpinHistoryItem[]): SpinHistoryItem[] {
+  return items.map((item) => cloneSpinHistoryItem(item));
 }
 
 export class GroupDurableObject {
@@ -67,6 +91,8 @@ export class GroupDurableObject {
           participants: [],
           version: 0,
           spin: cloneSpinState(DEFAULT_SPIN_STATE),
+          spinHistory: [],
+          pendingResultSpinId: null,
         };
 
         await this.state.storage.put(GROUP_STATE_KEY, nextState);
@@ -206,6 +232,80 @@ export class GroupDurableObject {
         return Response.json({ spin: startedState.spin }, { status: 202 });
       }
 
+      if (request.method === "GET" && url.pathname === "/history") {
+        const current = await this.loadState();
+        if (!current) {
+          return this.error(404, "Group not found.");
+        }
+
+        return Response.json(cloneSpinHistory(current.spinHistory).reverse());
+      }
+
+      const historyPathMatch = url.pathname.match(/^\/history\/([^/]+)$/);
+      const historySavePathMatch = url.pathname.match(/^\/history\/([^/]+)\/save$/);
+      if (historySavePathMatch && request.method === "POST") {
+        const current = await this.loadState();
+        if (!current) {
+          return this.error(404, "Group not found.");
+        }
+
+        const spinId = historySavePathMatch[1];
+        if (!spinId) {
+          return this.error(400, "Spin id is required.");
+        }
+
+        if (current.pendingResultSpinId === spinId) {
+          current.pendingResultSpinId = null;
+          const next = await this.bumpAndSave(current);
+          this.broadcast({
+            type: "spin.result.dismissed",
+            groupId: next.group.id,
+            version: next.version,
+            ts: new Date().toISOString(),
+            payload: {
+              spinId,
+              action: "save",
+            },
+          });
+        }
+
+        return new Response(null, { status: 204 });
+      }
+
+      if (historyPathMatch && request.method === "DELETE") {
+        const current = await this.loadState();
+        if (!current) {
+          return this.error(404, "Group not found.");
+        }
+
+        const spinId = historyPathMatch[1];
+        if (!spinId) {
+          return this.error(400, "Spin id is required.");
+        }
+
+        const hadPendingResult = current.pendingResultSpinId === spinId;
+        current.spinHistory = current.spinHistory.filter((item) => item.id !== spinId);
+        if (hadPendingResult) {
+          current.pendingResultSpinId = null;
+        }
+        const next = await this.bumpAndSave(current);
+
+        if (hadPendingResult) {
+          this.broadcast({
+            type: "spin.result.dismissed",
+            groupId: next.group.id,
+            version: next.version,
+            ts: new Date().toISOString(),
+            payload: {
+              spinId,
+              action: "discard",
+            },
+          });
+        }
+
+        return new Response(null, { status: 204 });
+      }
+
       const participantsPathMatch = url.pathname.match(/^\/participants\/([^/]+)$/);
       if (participantsPathMatch && request.method === "PATCH") {
         const current = await this.loadState();
@@ -337,12 +437,28 @@ export class GroupDurableObject {
     }
 
     const resolvedAt = new Date().toISOString();
+    const winnerParticipantId = current.spin.winnerParticipantId;
+    const completedSpinId = current.spin.spinId;
+
+    if (!winnerParticipantId || !completedSpinId) {
+      return;
+    }
 
     current.spin = {
       ...current.spin,
       status: "idle",
       resolvedAt,
     };
+    current.spinHistory.push({
+      id: completedSpinId,
+      createdAt: resolvedAt,
+      participants: cloneParticipants(
+        current.participants.filter((participant) => participant.active),
+      ),
+      winnerParticipantId,
+    });
+    current.spinHistory = current.spinHistory.slice(-MAX_SPIN_HISTORY_ITEMS);
+    current.pendingResultSpinId = completedSpinId;
 
     current.version += 1;
     await this.saveState(current);
@@ -387,8 +503,11 @@ export class GroupDurableObject {
 
     return {
       ...data,
+      participants: cloneParticipants(data.participants ?? []),
       version: typeof data.version === "number" ? data.version : 0,
       spin: data.spin ? cloneSpinState(data.spin) : cloneSpinState(DEFAULT_SPIN_STATE),
+      spinHistory: cloneSpinHistory(data.spinHistory ?? []),
+      pendingResultSpinId: data.pendingResultSpinId ?? null,
     };
   }
 

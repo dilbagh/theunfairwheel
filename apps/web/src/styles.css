@@ -280,6 +280,16 @@ input[type="checkbox"]:focus-visible {
   gap: 1rem;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.header-history-link {
+  text-decoration: none;
+}
+
 .content-grid {
   display: grid;
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -451,6 +461,57 @@ input[type="checkbox"]:focus-visible {
   gap: 0.7rem;
 }
 
+.history-layout {
+  width: min(980px, 100%);
+  display: grid;
+  gap: 1rem;
+}
+
+.history-header {
+  align-items: center;
+}
+
+.history-panel {
+  width: 100%;
+  padding: 1rem;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.history-item {
+  border: 1px solid rgba(38, 222, 255, 0.25);
+  border-radius: 0.8rem;
+  background: rgba(5, 16, 28, 0.62);
+  padding: 0.8rem 0.9rem;
+}
+
+.history-winner {
+  margin: 0;
+  font-weight: 700;
+  color: #d8f5ff;
+}
+
+.history-timestamp {
+  margin: 0.45rem 0 0;
+  color: #97b5c6;
+  font-size: 0.92rem;
+}
+
+.history-participants {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+}
+
+.history-back-btn {
+  margin-top: 0;
+}
+
 .link-btn {
   text-decoration: none;
   display: inline-flex;
@@ -472,6 +533,10 @@ input[type="checkbox"]:focus-visible {
   .header-panel {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .header-actions {
+    width: 100%;
   }
 }
 
