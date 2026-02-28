@@ -9,11 +9,12 @@ This guide sets up continuous deployment (CD) for this repo:
 
 When you push to `main`, GitHub Actions will:
 1. Install dependencies.
-2. Build the frontend with `VITE_API_URL` from GitHub Secrets.
+2. Build the frontend with `VITE_API_URL` and `VITE_CLERK_PUBLISHABLE_KEY` from GitHub Secrets.
 3. Deploy `apps/web/dist` to Cloudflare Pages.
 4. Generate `apps/backend/wrangler.deploy.jsonc` from `apps/backend/wrangler.jsonc` by injecting KV namespace IDs from GitHub Secrets.
-5. Deploy the Worker using the generated deploy config.
-6. Set Worker `FRONTEND_URL` from GitHub Secrets for CORS.
+5. Set Worker secret `CLERK_SECRET_KEY` from GitHub Secrets.
+6. Deploy the Worker using the generated deploy config.
+7. Set Worker `FRONTEND_URL` from GitHub Secrets for CORS.
 
 ## 2. Create Cloudflare resources (Dashboard)
 
@@ -66,6 +67,15 @@ From command output, copy:
 - Production `id` -> `GROUP_INDEX_KV_ID`
 - Preview `id` -> `GROUP_INDEX_KV_PREVIEW_ID`
 
+### 2.5 Create (or confirm) Clerk app + keys
+
+1. Open [Clerk Dashboard](https://dashboard.clerk.com/).
+2. Create or open your Clerk application.
+3. Copy:
+   - Publishable key -> `VITE_CLERK_PUBLISHABLE_KEY`
+   - Secret key -> `CLERK_SECRET_KEY`
+4. Keep Clerk-hosted sign-in enabled (this project uses Clerk components/pages and does not define custom auth pages).
+
 ## 3. Create a Cloudflare API Token
 
 Create one token that can deploy both Pages and Worker.
@@ -100,6 +110,8 @@ Required secrets:
 - `PROD_FRONTEND_URL`
 - `GROUP_INDEX_KV_ID`
 - `GROUP_INDEX_KV_PREVIEW_ID`
+- `VITE_CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
 
 Recommended value format:
 - `PROD_FRONTEND_URL`: `https://<project>.pages.dev`
@@ -108,6 +120,8 @@ Recommended value format:
 Example:
 - `PROD_FRONTEND_URL=https://theunfairwheel-web.pages.dev`
 - `PROD_API_URL=https://theunfairwheel-backend.<your-subdomain>.workers.dev`
+- `VITE_CLERK_PUBLISHABLE_KEY=pk_live_xxxxx`
+- `CLERK_SECRET_KEY=sk_live_xxxxx`
 
 ## 5. One-time Cloudflare settings checklist
 
@@ -117,6 +131,8 @@ Before first production deploy, verify:
 - Worker deploy succeeds manually at least once (optional but useful sanity check).
 - `PROD_FRONTEND_URL` matches the frontend domain.
 - `PROD_API_URL` matches the backend Worker public URL.
+- `VITE_CLERK_PUBLISHABLE_KEY` belongs to the same Clerk app expected by production frontend.
+- `CLERK_SECRET_KEY` belongs to the same Clerk app used for frontend sessions.
 
 If you later move to custom domains:
 1. Add custom domain in Pages.
@@ -134,6 +150,7 @@ It deploys on:
 
 It uses:
 - `pnpm dlx wrangler@4.44.0 pages deploy ...` for Pages deployment
+- `pnpm dlx wrangler@4.44.0 secret put CLERK_SECRET_KEY ...` for Worker auth secret
 - `pnpm dlx wrangler@4.44.0 deploy ...` for Worker deployment (with generated `wrangler.deploy.jsonc`)
 
 `cloudflare/pages-action` is not used because it is deprecated.
@@ -171,6 +188,28 @@ Likely cause:
 Fix:
 1. Recreate token with required scopes.
 2. Update `CLOUDFLARE_API_TOKEN` in GitHub Secrets.
+3. Re-run workflow.
+
+### Error: Missing `VITE_CLERK_PUBLISHABLE_KEY` in frontend build
+
+Likely cause:
+- Missing `VITE_CLERK_PUBLISHABLE_KEY` GitHub secret
+- Wrong key copied from Clerk dashboard
+
+Fix:
+1. Copy publishable key from Clerk dashboard.
+2. Update `VITE_CLERK_PUBLISHABLE_KEY` in GitHub secrets.
+3. Re-run workflow.
+
+### Error: Backend returns `401` for valid signed-in users
+
+Likely cause:
+- Worker secret `CLERK_SECRET_KEY` is missing or wrong
+- Frontend and backend keys are from different Clerk apps
+
+Fix:
+1. Verify `CLERK_SECRET_KEY` in GitHub secrets.
+2. Ensure publishable/secret keys are from the same Clerk app.
 3. Re-run workflow.
 
 ### Error: Could not find account
@@ -225,8 +264,10 @@ Fix:
 Likely cause:
 - `PROD_API_URL` points to wrong Worker URL
 - `PROD_FRONTEND_URL` does not match deployed frontend domain
+- Clerk key configuration mismatch between frontend and backend
 
 Fix:
 1. Verify Worker URL and Pages URL.
-2. Update both secrets.
+2. Verify `VITE_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
+3. Update secrets.
 3. Push a new commit to redeploy frontend and Worker.

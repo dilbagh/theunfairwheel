@@ -2,9 +2,15 @@ export type Group = {
   id: string;
   name: string;
   createdAt: string;
+  ownerUserId: string;
+  ownerEmail: string;
+  ownerParticipantId: string;
 };
 
-export type GroupIndexRecord = Pick<Group, "id" | "name" | "createdAt">;
+export type GroupIndexRecord = Pick<
+  Group,
+  "id" | "name" | "createdAt" | "ownerUserId" | "ownerEmail"
+>;
 
 export type Participant = {
   id: string;

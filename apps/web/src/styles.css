@@ -44,6 +44,17 @@ input {
   min-height: 100vh;
 }
 
+.app-frame {
+  position: relative;
+  z-index: 2;
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 1.2rem 1.5rem 1.5rem;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 .bg-layer {
   position: absolute;
   inset: 0;
@@ -78,12 +89,84 @@ input {
 
 .page-wrap {
   position: relative;
-  z-index: 1;
-  padding: 1.5rem;
-  min-height: 100vh;
+  z-index: 2;
+  padding: 1.25rem 0 0;
+  flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.global-nav {
+  width: 100%;
+  margin: 0;
+  border-color: rgba(38, 222, 255, 0.38);
+  box-shadow: 0 14px 30px rgba(1, 4, 8, 0.45), inset 0 0 16px rgba(38, 222, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+}
+
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.brand-mark {
+  color: var(--accent-gold);
+  text-shadow: 0 0 12px rgba(244, 200, 102, 0.6);
+}
+
+.brand-name {
+  font-family: "Orbitron", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+.global-nav-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nav-groups-btn {
+  height: 2.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  border-color: rgba(38, 222, 255, 0.52);
+}
+
+.global-nav-actions .cl-userButtonTrigger {
+  width: 2.5rem;
+  height: 2.5rem;
+  box-shadow: 0 0 0 1px rgba(38, 222, 255, 0.32);
+}
+
+.group-selector-modal {
+  width: min(520px, calc(100vw - 2rem));
+  text-align: left;
+}
+
+.group-selector-section {
+  margin-top: 0.95rem;
+}
+
+.group-selector-list {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.group-selector-link {
+  width: 100%;
 }
 
 .center-panel,
@@ -94,6 +177,56 @@ input {
   background: var(--panel);
   backdrop-filter: blur(14px);
   box-shadow: 0 20px 40px rgba(1, 4, 8, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.global-nav.panel {
+  width: 100%;
+  max-width: none;
+}
+
+.global-footer {
+  width: 100%;
+  margin-top: 1.25rem;
+  border-color: rgba(63, 240, 176, 0.24);
+  box-shadow: 0 14px 30px rgba(1, 4, 8, 0.45), inset 0 0 16px rgba(63, 240, 176, 0.06);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.footer-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+
+.footer-socials {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.icon-btn.footer-social-link {
+  color: var(--accent-cyan);
+  width: 3rem;
+  height: 3rem;
+}
+
+.icon-btn.footer-social-link svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.footer-social-link:hover {
+  transform: translateY(-1px);
+  border-color: rgba(63, 240, 176, 0.55);
+}
+
+.footer-social-link:focus-visible {
+  border-color: rgba(63, 240, 176, 0.55);
 }
 
 .center-panel {
@@ -320,6 +453,31 @@ input[type="checkbox"]:focus-visible {
 .title-rename-btn:hover {
   border-color: rgba(255, 223, 142, 0.95);
   background: rgba(74, 52, 17, 0.9);
+}
+
+.title-bookmark-btn {
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  color: #aeb8ff;
+  border-color: rgba(165, 177, 255, 0.62);
+  background: rgba(28, 34, 76, 0.8);
+}
+
+.title-bookmark-btn svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.title-bookmark-btn:hover {
+  border-color: rgba(192, 201, 255, 0.95);
+  background: rgba(40, 48, 97, 0.92);
+}
+
+.title-bookmark-btn-active {
+  color: #111a42;
+  border-color: rgba(173, 186, 255, 0.95);
+  background: linear-gradient(135deg, #d8e0ff, #aebdff);
 }
 
 .title-share-btn {
@@ -728,9 +886,31 @@ input[type="checkbox"]:focus-visible {
 }
 
 @media (max-width: 960px) {
+  .app-frame {
+    width: 100%;
+    padding: 0.8rem 1rem 1rem;
+  }
+
+  .global-nav {
+    padding: 0.72rem 0.85rem;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .global-nav-actions {
+    width: 100%;
+  }
+
   .page-wrap {
     align-items: stretch;
-    padding: 1rem;
+    padding: 1rem 0 0;
+    min-height: 0;
+  }
+
+  .global-footer {
+    flex-wrap: wrap;
+    justify-content: center;
+    text-align: center;
   }
 
   .content-grid {

@@ -34,6 +34,7 @@ jobs:
         run: pnpm --filter @repo/web build
         env:
           VITE_API_URL: ${{ secrets.PROD_API_URL }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
 
       - name: Deploy frontend to Cloudflare Pages
         run: >-
@@ -51,6 +52,7 @@ jobs:
           PROD_FRONTEND_URL: ${{ secrets.PROD_FRONTEND_URL }}
           GROUP_INDEX_KV_ID: ${{ secrets.GROUP_INDEX_KV_ID }}
           GROUP_INDEX_KV_PREVIEW_ID: ${{ secrets.GROUP_INDEX_KV_PREVIEW_ID }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
         run: >-
           node -e "const fs=require('fs');
           const p='apps/backend/wrangler.jsonc';
@@ -64,5 +66,6 @@ jobs:
             preview_id:process.env.GROUP_INDEX_KV_PREVIEW_ID
           }];
           fs.writeFileSync('apps/backend/wrangler.deploy.jsonc', JSON.stringify(cfg,null,2));"
+          && printf '%s' "$CLERK_SECRET_KEY" | pnpm dlx wrangler@4.44.0 secret put CLERK_SECRET_KEY --config apps/backend/wrangler.deploy.jsonc
           && pnpm dlx wrangler@4.44.0 deploy --config apps/backend/wrangler.deploy.jsonc
           --var FRONTEND_URL:$PROD_FRONTEND_URL

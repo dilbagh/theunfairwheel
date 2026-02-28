@@ -179,15 +179,33 @@ export class GroupDurableObject {
 
     try {
       if (request.method === "POST" && url.pathname === "/init") {
-        const body = (await request.json()) as { group: Group };
+        const body = (await request.json()) as { group: Group; ownerParticipant: Participant };
         const groupName = validateName(body.group.name);
+        const ownerParticipant = normalizeParticipant(body.ownerParticipant);
+
+        if (ownerParticipant.id !== body.group.ownerParticipantId) {
+          return this.error(400, "Owner participant id mismatch.");
+        }
+        if (!ownerParticipant.emailId) {
+          return this.error(400, "Owner participant must have a valid emailId.");
+        }
+        if (!ownerParticipant.manager) {
+          return this.error(400, "Owner participant must be a manager.");
+        }
 
         const nextState: GroupState = {
           group: {
             ...body.group,
             name: groupName,
           },
-          participants: [],
+          participants: [
+            {
+              ...ownerParticipant,
+              active: true,
+              manager: true,
+              emailId: ownerParticipant.emailId,
+            },
+          ],
           version: 0,
           spin: cloneSpinState(DEFAULT_SPIN_STATE),
           spinHistory: [],
@@ -518,6 +536,9 @@ export class GroupDurableObject {
           if (removeSet.has(participantId)) {
             return this.error(400, `Duplicate remove participant id: ${participantId}`);
           }
+          if (participantId === current.group.ownerParticipantId) {
+            return this.error(400, "Owner participant cannot be removed.");
+          }
           removeSet.add(participantId);
         }
 
@@ -544,6 +565,17 @@ export class GroupDurableObject {
           const currentParticipant = currentById.get(participantId);
           if (!currentParticipant) {
             return this.error(404, `Participant not found: ${participantId}`);
+          }
+          if (participantId === current.group.ownerParticipantId) {
+            if (typeof update.emailId !== "undefined") {
+              const nextOwnerEmail = normalizeEmailId(update.emailId);
+              if (nextOwnerEmail !== currentParticipant.emailId) {
+                return this.error(400, "Owner participant email cannot be changed.");
+              }
+            }
+            if (typeof update.manager !== "undefined" && update.manager !== true) {
+              return this.error(400, "Owner participant must remain a manager.");
+            }
           }
 
           let emailId = currentParticipant.emailId;
@@ -613,6 +645,14 @@ export class GroupDurableObject {
             const updated = updateMap.get(participant.id);
             if (!updated) {
               return participant;
+            }
+            if (participant.id === current.group.ownerParticipantId) {
+              return {
+                ...participant,
+                active: true,
+                emailId: participant.emailId,
+                manager: true,
+              };
             }
             return {
               ...participant,
@@ -699,16 +739,28 @@ export class GroupDurableObject {
           if (typeof body.active !== "boolean") {
             return this.error(400, "active must be a boolean.");
           }
+          if (participant.id === current.group.ownerParticipantId && body.active === false) {
+            return this.error(400, "Owner participant must remain active.");
+          }
           participant.active = body.active;
         }
 
         if (typeof body.emailId !== "undefined") {
+          if (participant.id === current.group.ownerParticipantId) {
+            const nextOwnerEmail = normalizeEmailId(body.emailId);
+            if (nextOwnerEmail !== participant.emailId) {
+              return this.error(400, "Owner participant email cannot be changed.");
+            }
+          }
           participant.emailId = normalizeEmailId(body.emailId);
         }
 
         if (typeof body.manager !== "undefined") {
           if (typeof body.manager !== "boolean") {
             return this.error(400, "manager must be a boolean.");
+          }
+          if (participant.id === current.group.ownerParticipantId && body.manager !== true) {
+            return this.error(400, "Owner participant must remain a manager.");
           }
           participant.manager = body.manager;
         }
@@ -718,6 +770,10 @@ export class GroupDurableObject {
         }
         if (!participant.emailId) {
           participant.manager = false;
+        }
+        if (participant.id === current.group.ownerParticipantId) {
+          participant.active = true;
+          participant.manager = true;
         }
 
         const next = await this.bumpAndSave(current);
@@ -743,6 +799,9 @@ export class GroupDurableObject {
         const participantId = participantsPathMatch[1];
         if (!participantId) {
           return this.error(400, "Participant id is required.");
+        }
+        if (participantId === current.group.ownerParticipantId) {
+          return this.error(400, "Owner participant cannot be removed.");
         }
         const previousCount = current.participants.length;
         current.participants = current.participants.filter(

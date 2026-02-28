@@ -7,7 +7,10 @@ const app = new Hono<AppEnv>();
 
 app.use("/*", (c, next) => {
   const frontendUrl = c.env.FRONTEND_URL;
-  return cors({ origin: frontendUrl })(c, next);
+  return cors({
+    origin: frontendUrl,
+    allowHeaders: ["Content-Type", "Authorization"],
+  })(c, next);
 });
 
 const routes = app

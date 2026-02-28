@@ -1,6 +1,7 @@
+import { SignInButton } from "@clerk/clerk-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ApiError, groupsApi } from "../lib/groups";
+import { ApiError, useCurrentUserEmailSet, useGroupsApi } from "../lib/groups";
 
 export const Route = createFileRoute("/groups/$groupId/history")({
   component: GroupHistoryPage,
@@ -23,18 +24,65 @@ function formatSpinTimestamp(timestamp: string): string {
 
 function GroupHistoryPage() {
   const { groupId } = Route.useParams();
+  const groupsApi = useGroupsApi();
+  const userEmails = useCurrentUserEmailSet();
+
+  const participantsQuery = useQuery({
+    queryKey: ["participants", groupId],
+    queryFn: () => groupsApi.listParticipants({ groupId }),
+  });
+
+  const hasAccess = (participantsQuery.data ?? []).some(
+    (participant) =>
+      typeof participant.emailId === "string" &&
+      userEmails.has(participant.emailId.trim().toLowerCase()),
+  );
 
   const historyQuery = useQuery({
     queryKey: ["spin-history", groupId],
     queryFn: () => groupsApi.listSpinHistory({ groupId }),
+    enabled: hasAccess,
     retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 404) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) {
         return false;
       }
 
       return failureCount < 3;
     },
   });
+
+  if (participantsQuery.isLoading) {
+    return <p className="status-text">Loading access...</p>;
+  }
+
+  if (participantsQuery.isError) {
+    return (
+      <section className="center-panel">
+        <h1>History Unavailable</h1>
+        <p className="muted-text">This group id does not exist or cannot be loaded.</p>
+        <Link className="primary-btn link-btn" to="/groups/$groupId" params={{ groupId }}>
+          Back to wheel
+        </Link>
+      </section>
+    );
+  }
+
+  if (!hasAccess) {
+    return (
+      <section className="center-panel">
+        <h1>Access Denied</h1>
+        <p className="muted-text">Only participants in this group can view history.</p>
+        <SignInButton mode="modal">
+          <button type="button" className="ghost-btn">Log In</button>
+        </SignInButton>
+        <div className="modal-actions">
+          <Link className="primary-btn link-btn" to="/groups/$groupId" params={{ groupId }}>
+            Back to wheel
+          </Link>
+        </div>
+      </section>
+    );
+  }
 
   if (historyQuery.isLoading) {
     return <p className="status-text">Loading history...</p>;

@@ -1,3 +1,4 @@
+import { useAuth } from "@clerk/clerk-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -5,7 +6,9 @@ import { audioEngine } from "../lib/audio";
 import { connectGroupRealtime, type GroupRealtimeStatus } from "../lib/group-realtime";
 import {
   ApiError,
-  groupsApi,
+  type GroupsApi,
+  useCurrentUserEmailSet,
+  useGroupsApi,
   type GroupRealtimeEvent,
   type GroupSpinState,
   type Participant,
@@ -17,7 +20,7 @@ export const Route = createFileRoute("/groups/$groupId/")({
   component: GroupPage,
 });
 
-type GroupData = Awaited<ReturnType<typeof groupsApi.getGroup>>;
+type GroupData = Awaited<ReturnType<GroupsApi["getGroup"]>>;
 
 type ParticipantMutationContext = {
   previousParticipants: Participant[];
@@ -136,14 +139,6 @@ function IconTrash() {
   );
 }
 
-function IconPlus() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
-    </svg>
-  );
-}
-
 function IconShare() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -166,8 +161,30 @@ function IconEdit() {
   );
 }
 
+function IconBookmark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3-6 3V4.5ZM8.5 4a.5.5 0 0 0-.5.5v14.3l4-2 4 2V4.5a.5.5 0 0 0-.5-.5h-7Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconBookmarkFilled() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3-6 3V4.5Z" fill="currentColor" />
+    </svg>
+  );
+}
+
 function GroupPage() {
   const { groupId } = Route.useParams();
+  const groupsApi = useGroupsApi();
+  const { isSignedIn, userId } = useAuth();
+  const userEmails = useCurrentUserEmailSet();
   const queryClient = useQueryClient();
   const [rotation, setRotation] = useState(0);
   const [spinDurationMs, setSpinDurationMs] = useState(0);
@@ -215,8 +232,44 @@ function GroupPage() {
     queryKey: ["participants", groupId],
     queryFn: () => groupsApi.listParticipants({ groupId }),
   });
+  const bookmarkedGroupIdsQuery = useQuery({
+    queryKey: ["group-bookmarks"],
+    queryFn: () => groupsApi.listBookmarkedGroupIds(),
+    enabled: isSignedIn,
+  });
+  const updateBookmarkedGroupIdsMutation = useMutation({
+    mutationFn: (groupIds: string[]) => groupsApi.setBookmarkedGroupIds({ groupIds }),
+    onMutate: async (nextGroupIds) => {
+      await queryClient.cancelQueries({ queryKey: ["group-bookmarks"] });
+      const previousGroupIds = queryClient.getQueryData<string[]>(["group-bookmarks"]) ?? [];
+      queryClient.setQueryData<string[]>(["group-bookmarks"], Array.from(new Set(nextGroupIds)));
+      return { previousGroupIds };
+    },
+    onError: (_error, _groupIds, context) => {
+      if (context) {
+        queryClient.setQueryData<string[]>(["group-bookmarks"], context.previousGroupIds);
+      }
+    },
+    onSuccess: (nextGroupIds) => {
+      queryClient.setQueryData<string[]>(["group-bookmarks"], nextGroupIds);
+    },
+  });
 
   const participants = useMemo(() => participantsQuery.data ?? [], [participantsQuery.data]);
+  const currentUserParticipant = useMemo(
+    () =>
+      participants.find(
+        (participant) =>
+          typeof participant.emailId === "string" &&
+          userEmails.has(participant.emailId.trim().toLowerCase()),
+      ) ?? null,
+    [participants, userEmails],
+  );
+  const canManageParticipants = Boolean(currentUserParticipant?.manager);
+  const canSpin = Boolean(currentUserParticipant);
+  const canViewHistory = Boolean(currentUserParticipant);
+  const bookmarkedGroupIds = bookmarkedGroupIdsQuery.data ?? [];
+  const isGroupBookmarked = bookmarkedGroupIds.includes(groupId);
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
   const isRealtimeConnected = realtimeStatus === "open";
   const wheelSegments = useMemo(
@@ -525,6 +578,10 @@ function GroupPage() {
   });
 
   const openParticipantModal = () => {
+    if (!canManageParticipants) {
+      setParticipantModalError("Manager access is required to manage participants.");
+      return;
+    }
     setParticipantDrafts(participants.map(participantToDraft));
     setParticipantModalError(null);
     setNewParticipantError(null);
@@ -679,6 +736,11 @@ function GroupPage() {
   };
 
   const onSpin = () => {
+    if (!canSpin) {
+      setSpinError("Only participants in this group can spin the wheel.");
+      return;
+    }
+
     if (isSpinning || isSpinRequestPending || eligibleParticipants.length < 2) {
       return;
     }
@@ -716,6 +778,10 @@ function GroupPage() {
     return <p className="status-text">Group unavailable.</p>;
   }
 
+  const isGroupOwner = Boolean(userId && group.ownerUserId === userId);
+  const canBookmarkGroup = isSignedIn && Boolean(userId) && !isGroupOwner;
+  const bookmarkTitle = isGroupBookmarked ? "Remove bookmark" : "Bookmark group";
+
   const onCopyGroupLink = async () => {
     void audioEngine.playClick();
     try {
@@ -733,6 +799,10 @@ function GroupPage() {
   };
 
   const openRenameModal = () => {
+    if (!canManageParticipants) {
+      setRenameError("Manager access is required to rename the group.");
+      return;
+    }
     void audioEngine.playClick();
     setRenameDraftName(group.name);
     setRenameError(null);
@@ -770,11 +840,37 @@ function GroupPage() {
               }
               title={renameGroupMutation.isPending ? "Renaming current group" : "Rename current group"}
               onClick={openRenameModal}
-              disabled={renameGroupMutation.isPending}
+              disabled={!canManageParticipants || renameGroupMutation.isPending}
             >
               <IconEdit />
               <span className="sr-only">Rename group</span>
             </button>
+            {canBookmarkGroup && (
+              <button
+                type="button"
+                className={`ghost-btn icon-btn title-bookmark-btn ${
+                  isGroupBookmarked ? "title-bookmark-btn-active" : ""
+                }`}
+                aria-label={bookmarkTitle}
+                title={bookmarkTitle}
+                onClick={() => {
+                  if (!canBookmarkGroup || updateBookmarkedGroupIdsMutation.isPending) {
+                    return;
+                  }
+
+                  void audioEngine.playClick();
+                  const nextBookmarkedGroupIds = isGroupBookmarked
+                    ? bookmarkedGroupIds.filter((bookmarkedGroupId) => bookmarkedGroupId !== groupId)
+                    : [...bookmarkedGroupIds, groupId];
+
+                  updateBookmarkedGroupIdsMutation.mutate(nextBookmarkedGroupIds);
+                }}
+                disabled={updateBookmarkedGroupIdsMutation.isPending}
+              >
+                {isGroupBookmarked ? <IconBookmarkFilled /> : <IconBookmark />}
+                <span className="sr-only">{bookmarkTitle}</span>
+              </button>
+            )}
             <button
               type="button"
               className={`ghost-btn icon-btn title-share-btn ${isShareCopied ? "title-share-btn-copied" : ""}`}
@@ -839,16 +935,18 @@ function GroupPage() {
         <aside className="panel side-panel">
           <div className="participant-panel-header">
             <h2>Participants</h2>
-            <button
-              type="button"
-              className="ghost-btn manage-participants-btn"
-              onClick={() => {
-                void audioEngine.playClick();
-                openParticipantModal();
-              }}
-            >
-              Manage Participants
-            </button>
+            {canManageParticipants && (
+              <button
+                type="button"
+                className="ghost-btn manage-participants-btn"
+                onClick={() => {
+                  void audioEngine.playClick();
+                  openParticipantModal();
+                }}
+              >
+                Manage Participants
+              </button>
+            )}
           </div>
           {spinError && <p className="error-text">{spinError}</p>}
 
@@ -865,6 +963,7 @@ function GroupPage() {
                       active: !participant.active,
                     })
                   }
+                  disabled={!canManageParticipants}
                   aria-label={
                     participant.active
                       ? "Mark participant absent and exclude from wheel"
@@ -887,13 +986,23 @@ function GroupPage() {
               </li>
             ))}
           </ul>
-          <Link
-            className="ghost-btn participant-history-link"
-            to="/groups/$groupId/history"
-            params={{ groupId }}
-          >
-            View History
-          </Link>
+          {canViewHistory ? (
+            <Link
+              className="ghost-btn participant-history-link"
+              to="/groups/$groupId/history"
+              params={{ groupId }}
+            >
+              View History
+            </Link>
+          ) : (
+            <button type="button" className="ghost-btn participant-history-link" disabled>
+              View History
+            </button>
+          )}
+          {!isSignedIn && <p className="muted-text">Log in to manage participants.</p>}
+          {isSignedIn && !canSpin && (
+            <p className="muted-text">You are not a participant in this group.</p>
+          )}
         </aside>
 
         <div className="panel wheel-panel">
@@ -976,11 +1085,14 @@ function GroupPage() {
             type="button"
             className="primary-btn spin-btn"
             onClick={onSpin}
-            disabled={isSpinning || isSpinRequestPending || eligibleParticipants.length < 2}
+            disabled={!canSpin || isSpinning || isSpinRequestPending || eligibleParticipants.length < 2}
           >
             {isSpinning || isSpinRequestPending ? "Spinning..." : "Spin the Wheel"}
           </button>
-          {eligibleParticipants.length < 2 && (
+          {!canSpin && (
+            <p className="muted-text">Only group participants can spin the wheel.</p>
+          )}
+          {canSpin && eligibleParticipants.length < 2 && (
             <p className="muted-text">Need at least 2 active participants to spin.</p>
           )}
         </div>
@@ -1078,12 +1190,14 @@ function GroupPage() {
               {participantDrafts.length === 0 && <li className="muted-text">No participants in draft.</li>}
               {participantDrafts.map((participant) => {
                 const validEmail = normalizeEmailInput(participant.emailId);
+                const isOwnerParticipant = participant.participantId === group.ownerParticipantId;
                 return (
                   <li key={participant.id} className="participant-edit-item">
                     <div className="participant-edit-name">{participant.name}</div>
                     <input
                       className="text-input"
                       value={participant.emailId}
+                      disabled={isOwnerParticipant}
                       onChange={(event) => {
                         const nextEmailId = event.target.value;
                         setParticipantDrafts((current) =>
@@ -1107,6 +1221,7 @@ function GroupPage() {
                       <input
                         type="checkbox"
                         checked={participant.manager}
+                        disabled={isOwnerParticipant || !validEmail}
                         onChange={(event) => {
                           const checked = event.target.checked;
                           setParticipantDrafts((current) =>
@@ -1115,7 +1230,6 @@ function GroupPage() {
                             ),
                           );
                         }}
-                        disabled={!validEmail}
                       />
                       Manager
                     </label>
@@ -1124,6 +1238,7 @@ function GroupPage() {
                       className="danger-btn icon-btn remove-btn"
                       aria-label={`Remove ${participant.name}`}
                       title={`Remove ${participant.name}`}
+                      disabled={isOwnerParticipant}
                       onClick={() => {
                         setParticipantDrafts((current) =>
                           current.filter((item) => item.id !== participant.id),
@@ -1135,6 +1250,11 @@ function GroupPage() {
                     </button>
                     {!isValidOptionalEmail(participant.emailId) && (
                       <p className="error-text participant-inline-error">Invalid email format.</p>
+                    )}
+                    {isOwnerParticipant && (
+                      <p className="muted-text participant-inline-error">
+                        Owner settings are locked.
+                      </p>
                     )}
                   </li>
                 );
