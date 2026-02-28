@@ -439,6 +439,8 @@ input[type="checkbox"]:focus-visible {
 
 .spin-btn {
   margin-top: 1rem;
+  position: relative;
+  z-index: 3;
 }
 
 .modal-backdrop {

@@ -565,6 +565,16 @@ function GroupPage() {
           <Link className="ghost-btn header-history-link" to="/groups/$groupId/history" params={{ groupId }}>
             View History
           </Link>
+          <Link
+            className="ghost-btn header-history-link"
+            to="/"
+            onClick={() => {
+              void audioEngine.playClick();
+              clearLastGroupId();
+            }}
+          >
+            Create new group
+          </Link>
           <button
             type="button"
             className="ghost-btn icon-btn sound-btn"
