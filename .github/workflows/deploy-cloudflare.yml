@@ -41,6 +41,8 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          packageManager: npm
+          wranglerVersion: "4.44.0"
           command: >-
             pages deploy apps/web/dist
             --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
@@ -51,6 +53,8 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: npm
+          wranglerVersion: "4.44.0"
           command: >-
             deploy --config apps/backend/wrangler.jsonc
             --var FRONTEND_URL:${{ secrets.PROD_FRONTEND_URL }}
