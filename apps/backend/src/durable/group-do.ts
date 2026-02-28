@@ -1,8 +1,6 @@
 import {
-  DEFAULT_GROUP_SETTINGS,
   randomId,
   type Group,
-  type GroupSettings,
   type Participant,
   validateName,
 } from "../domain/group";
@@ -65,7 +63,6 @@ export class GroupDurableObject {
           group: {
             ...body.group,
             name: groupName,
-            settings: body.group.settings ?? DEFAULT_GROUP_SETTINGS,
           },
           participants: [],
           version: 0,
@@ -104,35 +101,6 @@ export class GroupDurableObject {
         }
 
         return Response.json(current.group);
-      }
-
-      if (request.method === "PATCH" && url.pathname === "/settings") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const body = (await request.json()) as Partial<GroupSettings>;
-        if (typeof body.removeWinnerAfterSpin !== "boolean") {
-          return this.error(400, "removeWinnerAfterSpin must be a boolean.");
-        }
-
-        current.group.settings = {
-          removeWinnerAfterSpin: body.removeWinnerAfterSpin,
-        };
-
-        const next = await this.bumpAndSave(current);
-        this.broadcast({
-          type: "group.settings.updated",
-          groupId: next.group.id,
-          version: next.version,
-          ts: new Date().toISOString(),
-          payload: {
-            settings: next.group.settings,
-          },
-        });
-
-        return Response.json(next.group.settings);
       }
 
       if (request.method === "GET" && url.pathname === "/participants") {
@@ -368,7 +336,6 @@ export class GroupDurableObject {
       return;
     }
 
-    const winnerParticipantId = current.spin.winnerParticipantId;
     const resolvedAt = new Date().toISOString();
 
     current.spin = {
@@ -377,30 +344,8 @@ export class GroupDurableObject {
       resolvedAt,
     };
 
-    let participantEvent: GroupRealtimeEvent | null = null;
-    if (current.group.settings.removeWinnerAfterSpin && winnerParticipantId) {
-      const winner = current.participants.find((participant) => participant.id === winnerParticipantId);
-      if (winner && winner.active) {
-        winner.active = false;
-        current.version += 1;
-        participantEvent = {
-          type: "participant.updated",
-          groupId: current.group.id,
-          version: current.version,
-          ts: new Date().toISOString(),
-          payload: {
-            participant: winner,
-          },
-        };
-      }
-    }
-
     current.version += 1;
     await this.saveState(current);
-
-    if (participantEvent) {
-      this.broadcast(participantEvent);
-    }
 
     this.broadcast({
       type: "spin.resolved",

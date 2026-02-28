@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import {
-  DEFAULT_GROUP_SETTINGS,
   randomId,
   type Group,
   type GroupIndexRecord,
@@ -14,10 +13,6 @@ type ErrorBody = {
 };
 
 const createGroupBody = validator("json", (value) => value as { name?: string });
-const updateSettingsBody = validator(
-  "json",
-  (value) => value as { removeWinnerAfterSpin?: boolean },
-);
 const addParticipantBody = validator("json", (value) => value as { name?: string });
 const updateParticipantBody = validator("json", (value) => value as { active?: boolean });
 
@@ -53,7 +48,6 @@ const groupsRoutes = new Hono<AppEnv>()
       id: groupId,
       name,
       createdAt: new Date().toISOString(),
-      settings: DEFAULT_GROUP_SETTINGS,
     };
 
     const stub = groupStub(c, group.id);
@@ -101,25 +95,6 @@ const groupsRoutes = new Hono<AppEnv>()
     }
 
     return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
-  })
-  .patch("/groups/:groupId/settings", updateSettingsBody, async (c) => {
-    const groupId = c.req.param("groupId");
-    const body = c.req.valid("json");
-
-    const response = await callDurableObject(groupStub(c, groupId), "/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      return c.json(
-        { error: await parseError(response) },
-        response.status as 400 | 404 | 500,
-      );
-    }
-
-    return c.json(await response.json());
   })
   .post("/groups/:groupId/spin", async (c) => {
     const groupId = c.req.param("groupId");

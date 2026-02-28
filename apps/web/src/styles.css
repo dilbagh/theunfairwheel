@@ -194,6 +194,25 @@ input[type="checkbox"]:focus-visible {
   transition: transform 160ms ease, border-color 160ms ease, opacity 160ms ease;
 }
 
+.icon-btn {
+  width: 2.45rem;
+  height: 2.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.icon-btn svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.add-btn svg {
+  width: 1.42rem;
+  height: 1.42rem;
+}
+
 .primary-btn {
   padding: 0.72rem 1rem;
   color: #06101e;
@@ -219,6 +238,18 @@ input[type="checkbox"]:focus-visible {
 .ghost-btn:hover,
 .danger-btn:hover {
   transform: translateY(-1px);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .primary-btn:disabled,
@@ -284,26 +315,72 @@ input[type="checkbox"]:focus-visible {
   align-items: center;
 }
 
-.status-dot {
-  width: 0.85rem;
-  height: 0.85rem;
+.participant-toggle {
+  min-width: 6.1rem;
   border-radius: 999px;
-  border: 0;
+  border: 1px solid transparent;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.33rem 0.58rem 0.33rem 0.42rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+  transition: transform 160ms ease, border-color 160ms ease, opacity 160ms ease;
 }
 
-.status-dot.active {
+.participant-toggle:hover {
+  transform: translateY(-1px);
+}
+
+.participant-toggle-icon {
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.participant-toggle-icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.participant-toggle.present {
+  background: rgba(20, 63, 52, 0.72);
+  border-color: rgba(63, 240, 176, 0.6);
+}
+
+.participant-toggle.present .participant-toggle-icon {
   background: var(--accent-emerald);
-  box-shadow: 0 0 10px rgba(63, 240, 176, 0.8);
+  color: #052017;
 }
 
-.status-dot.inactive {
-  background: #60788a;
+.participant-toggle.absent {
+  background: rgba(58, 47, 23, 0.58);
+  border-color: rgba(244, 200, 102, 0.5);
+  color: #f4d8a2;
+}
+
+.participant-toggle.absent .participant-toggle-icon {
+  background: rgba(244, 200, 102, 0.92);
+  color: #271906;
+}
+
+.participant-name {
+  min-width: 0;
 }
 
 .inactive-name {
   color: #7e96a8;
   text-decoration: line-through;
+}
+
+.sound-btn {
+  width: 2.7rem;
+  height: 2.7rem;
 }
 
 .wheel-panel {

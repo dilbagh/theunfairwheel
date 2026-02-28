@@ -1,15 +1,10 @@
 import type { GroupRealtimeEvent, GroupSpinState } from "@repo/backend";
 import { apiClient } from "./api-client";
 
-export type GameSettings = {
-  removeWinnerAfterSpin: boolean;
-};
-
 export type Group = {
   id: string;
   name: string;
   createdAt: string;
-  settings: GameSettings;
 };
 
 export type Participant = {
@@ -21,7 +16,6 @@ export type Participant = {
 export type GroupsApi = {
   createGroup(input: { name: string }): Promise<Group>;
   getGroup(input: { id: string }): Promise<Group>;
-  updateGroupSettings(input: { groupId: string; settings: GameSettings }): Promise<GameSettings>;
   requestSpin(input: { groupId: string }): Promise<{ spin: GroupSpinState }>;
   listParticipants(input: { groupId: string }): Promise<Participant[]>;
   addParticipant(input: { groupId: string; name: string }): Promise<Participant>;
@@ -82,17 +76,6 @@ const httpGroupsApi: GroupsApi = {
     });
 
     return expectJson<Group>(response);
-  },
-
-  async updateGroupSettings(input) {
-    const response = await apiClient.groups[":groupId"].settings.$patch({
-      param: { groupId: input.groupId },
-      json: {
-        removeWinnerAfterSpin: input.settings.removeWinnerAfterSpin,
-      },
-    });
-
-    return expectJson<GameSettings>(response);
   },
 
   async requestSpin(input) {

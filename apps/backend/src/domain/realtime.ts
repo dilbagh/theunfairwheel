@@ -1,4 +1,4 @@
-import type { Group, GroupSettings, Participant } from "./group";
+import type { Group, Participant } from "./group";
 
 export type GroupSpinState = {
   status: "idle" | "spinning";
@@ -24,13 +24,6 @@ export type GroupSnapshotEvent = EventEnvelope<
     group: Group;
     participants: Participant[];
     spin: GroupSpinState;
-  }
->;
-
-export type GroupSettingsUpdatedEvent = EventEnvelope<
-  "group.settings.updated",
-  {
-    settings: GroupSettings;
   }
 >;
 
@@ -71,7 +64,6 @@ export type SpinResolvedEvent = EventEnvelope<
 
 export type GroupRealtimeEvent =
   | GroupSnapshotEvent
-  | GroupSettingsUpdatedEvent
   | ParticipantAddedEvent
   | ParticipantUpdatedEvent
   | ParticipantRemovedEvent

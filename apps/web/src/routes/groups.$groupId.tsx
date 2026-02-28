@@ -47,6 +47,69 @@ function dedupeParticipantsById(participants: Participant[]): Participant[] {
   return result;
 }
 
+function IconVolumeOn() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M3 9v6h4l5 4V5L7 9H3Zm13.5 3a3.5 3.5 0 0 0-1.8-3.07v6.14A3.5 3.5 0 0 0 16.5 12Zm-1.8-8.34v2.06a7 7 0 0 1 0 12.56v2.06a9 9 0 0 0 0-16.68Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconVolumeOff() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M3 9v6h4l5 4V5L7 9H3Zm16.1-.1-1.4-1.4L15 10.2l-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4-2.7-2.7 2.7-2.7Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconCheck() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M9.2 16.2 5.5 12.5l1.4-1.4 2.3 2.3 7-7 1.4 1.4-8.4 8.4Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconUserX() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-3.3 0-6 1.35-6 3v1h9.6a5.6 5.6 0 0 1-.6-2.5c0-.52.07-1.03.2-1.5Zm7.8 7.2-1.6 1.6-1.7-1.7-1.7 1.7-1.6-1.6 1.7-1.7-1.7-1.7 1.6-1.6 1.7 1.7 1.7-1.7 1.6 1.6-1.7 1.7 1.7 1.7Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconTrash() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm-5-11h10v2H7v-2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconPlus() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
+    </svg>
+  );
+}
+
 function GroupPage() {
   const { groupId } = Route.useParams();
   const queryClient = useQueryClient();
@@ -56,8 +119,6 @@ function GroupPage() {
   const [spinDurationMs, setSpinDurationMs] = useState(0);
   const [isSpinning, setIsSpinning] = useState(false);
   const [winner, setWinner] = useState<Participant | null>(null);
-  const [removeWinnerAfterSpin, setRemoveWinnerAfterSpin] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [spinError, setSpinError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(audioEngine.isMuted());
   const [realtimeStatus, setRealtimeStatus] = useState<GroupRealtimeStatus>("connecting");
@@ -181,7 +242,6 @@ function GroupPage() {
       case "snapshot": {
         queryClient.setQueryData<GroupData>(["groups", groupId], event.payload.group);
         queryClient.setQueryData<Participant[]>(["participants", groupId], event.payload.participants);
-        setRemoveWinnerAfterSpin(event.payload.group.settings.removeWinnerAfterSpin);
 
         if (
           event.payload.spin.status === "spinning" &&
@@ -191,19 +251,6 @@ function GroupPage() {
           runSpinAnimation(event.payload.spin);
         }
 
-        break;
-      }
-
-      case "group.settings.updated": {
-        setRemoveWinnerAfterSpin(event.payload.settings.removeWinnerAfterSpin);
-        queryClient.setQueryData<GroupData>(["groups", groupId], (current) =>
-          current
-            ? {
-                ...current,
-                settings: event.payload.settings,
-              }
-            : current,
-        );
         break;
       }
 
@@ -298,12 +345,6 @@ function GroupPage() {
   }, []);
 
   useEffect(() => {
-    if (groupQuery.data?.settings) {
-      setRemoveWinnerAfterSpin(groupQuery.data.settings.removeWinnerAfterSpin);
-    }
-  }, [groupQuery.data]);
-
-  useEffect(() => {
     if (groupQuery.data?.id) {
       setLastGroupId(groupQuery.data.id);
     }
@@ -378,7 +419,7 @@ function GroupPage() {
     },
   });
 
-  const toggleActiveMutation = useMutation<
+  const togglePresenceMutation = useMutation<
     Participant,
     Error,
     { participantId: string; active: boolean },
@@ -406,60 +447,6 @@ function GroupPage() {
           context.previousParticipants,
         );
       }
-    },
-  });
-
-  const updateSettingsMutation = useMutation<
-    Awaited<ReturnType<typeof groupsApi.updateGroupSettings>>,
-    Error,
-    boolean,
-    { previousGroup: GroupData | undefined }
-  >({
-    mutationFn: (nextValue: boolean) =>
-      groupsApi.updateGroupSettings({
-        groupId,
-        settings: { removeWinnerAfterSpin: nextValue },
-      }),
-    onMutate: async (nextValue) => {
-      await queryClient.cancelQueries({ queryKey: ["groups", groupId] });
-      const previousGroup = queryClient.getQueryData<GroupData>(["groups", groupId]);
-
-      queryClient.setQueryData<GroupData>(["groups", groupId], (current) =>
-        current
-          ? {
-              ...current,
-              settings: {
-                ...current.settings,
-                removeWinnerAfterSpin: nextValue,
-              },
-            }
-          : current,
-      );
-
-      setRemoveWinnerAfterSpin(nextValue);
-      setSettingsError(null);
-
-      return { previousGroup };
-    },
-    onError: (error, _nextValue, context) => {
-      if (context) {
-        queryClient.setQueryData<GroupData>(["groups", groupId], context.previousGroup);
-        setRemoveWinnerAfterSpin(
-          context.previousGroup?.settings.removeWinnerAfterSpin ?? removeWinnerAfterSpin,
-        );
-      }
-      setSettingsError(error.message);
-    },
-    onSuccess: (settings) => {
-      setSettingsError(null);
-      queryClient.setQueryData<GroupData>(["groups", groupId], (current) =>
-        current
-          ? {
-              ...current,
-              settings,
-            }
-          : current,
-      );
     },
   });
 
@@ -540,7 +527,9 @@ function GroupPage() {
         </div>
         <button
           type="button"
-          className="ghost-btn"
+          className="ghost-btn icon-btn sound-btn"
+          aria-label={isMuted ? "Unmute sound" : "Mute sound"}
+          title={isMuted ? "Unmute sound" : "Mute sound"}
           onClick={() => {
             void audioEngine.playClick();
             const nextMuted = !isMuted;
@@ -548,7 +537,8 @@ function GroupPage() {
             setIsMuted(nextMuted);
           }}
         >
-          {isMuted ? "Unmute" : "Mute"} sound
+          {isMuted ? <IconVolumeOff /> : <IconVolumeOn />}
+          <span className="sr-only">{isMuted ? "Unmute sound" : "Mute sound"}</span>
         </button>
       </header>
 
@@ -563,24 +553,21 @@ function GroupPage() {
               placeholder="Add a name"
               maxLength={60}
             />
-            <button type="submit" className="primary-btn" disabled={addMutation.isPending}>
-              Add
+            <button
+              type="submit"
+              className="primary-btn icon-btn add-btn"
+              disabled={addMutation.isPending}
+              aria-label="Add participant"
+              title="Add participant"
+            >
+              <IconPlus />
+              <span className="sr-only">Add participant</span>
             </button>
           </form>
           {participantError && <p className="error-text">{participantError}</p>}
-
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={removeWinnerAfterSpin}
-              onChange={(event) => {
-                updateSettingsMutation.mutate(event.target.checked);
-              }}
-              disabled={updateSettingsMutation.isPending}
-            />
-            Remove winner after spin
-          </label>
-          {settingsError && <p className="error-text">{settingsError}</p>}
+          <p className="muted-text">
+            Inactive participants stay in the list but are excluded from the wheel.
+          </p>
           {spinError && <p className="error-text">{spinError}</p>}
 
           <ul className="participant-list">
@@ -589,22 +576,36 @@ function GroupPage() {
               <li key={participant.id} className="participant-item">
                 <button
                   type="button"
-                  className={`status-dot ${participant.active ? "active" : "inactive"}`}
+                  className={`participant-toggle ${participant.active ? "present" : "absent"}`}
                   onClick={() =>
-                    toggleActiveMutation.mutate({
+                    togglePresenceMutation.mutate({
                       participantId: participant.id,
                       active: !participant.active,
                     })
                   }
-                  aria-label={participant.active ? "Deactivate participant" : "Activate participant"}
-                />
-                <span className={participant.active ? "" : "inactive-name"}>{participant.name}</span>
+                  aria-label={
+                    participant.active
+                      ? "Mark participant absent and exclude from wheel"
+                      : "Mark participant present and include in wheel"
+                  }
+                >
+                  <span className="participant-toggle-icon">
+                    {participant.active ? <IconCheck /> : <IconUserX />}
+                  </span>
+                  <span>{participant.active ? "Present" : "Absent"}</span>
+                </button>
+                <span className={`participant-name ${participant.active ? "" : "inactive-name"}`}>
+                  {participant.name}
+                </span>
                 <button
                   type="button"
-                  className="danger-btn"
+                  className="danger-btn icon-btn remove-btn"
+                  aria-label={`Remove ${participant.name}`}
+                  title={`Remove ${participant.name}`}
                   onClick={() => removeMutation.mutate(participant.id)}
                 >
-                  Remove
+                  <IconTrash />
+                  <span className="sr-only">Remove</span>
                 </button>
               </li>
             ))}

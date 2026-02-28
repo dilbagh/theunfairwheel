@@ -1,12 +1,7 @@
-export type GroupSettings = {
-  removeWinnerAfterSpin: boolean;
-};
-
 export type Group = {
   id: string;
   name: string;
   createdAt: string;
-  settings: GroupSettings;
 };
 
 export type GroupIndexRecord = Pick<Group, "id" | "name" | "createdAt">;
@@ -15,10 +10,6 @@ export type Participant = {
   id: string;
   name: string;
   active: boolean;
-};
-
-export const DEFAULT_GROUP_SETTINGS: GroupSettings = {
-  removeWinnerAfterSpin: false,
 };
 
 export function normalizeName(name: string): string {
