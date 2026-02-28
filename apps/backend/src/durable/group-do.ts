@@ -230,6 +230,38 @@ export class GroupDurableObject {
         return Response.json(current.group);
       }
 
+      if (request.method === "PATCH" && url.pathname === "/group") {
+        const current = await this.loadState();
+        if (!current) {
+          return this.error(404, "Group not found.");
+        }
+
+        const body = (await request.json()) as { name?: string };
+        const nextName = validateName(body.name ?? "");
+
+        if (current.group.name === nextName) {
+          return Response.json(current.group);
+        }
+
+        current.group = {
+          ...current.group,
+          name: nextName,
+        };
+
+        const next = await this.bumpAndSave(current);
+        this.broadcast({
+          type: "group.updated",
+          groupId: next.group.id,
+          version: next.version,
+          ts: new Date().toISOString(),
+          payload: {
+            group: next.group,
+          },
+        });
+
+        return Response.json(next.group);
+      }
+
       if (request.method === "GET" && url.pathname === "/participants") {
         const current = await this.loadState();
         if (!current) {

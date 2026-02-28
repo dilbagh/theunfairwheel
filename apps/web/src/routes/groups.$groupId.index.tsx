@@ -144,6 +144,28 @@ function IconPlus() {
   );
 }
 
+function IconShare() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M14 3h7v7h-2V6.41l-8.29 8.3-1.42-1.42 8.3-8.29H14V3ZM5 5h6v2H7v10h10v-4h2v6H5V5Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function IconEdit() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="m4 15.7 9.8-9.8 4.3 4.3-9.8 9.8H4v-4.3Zm2 2h1.4l8.6-8.6-1.4-1.4L6 16.3v1.4Zm12.9-8.9-4.3-4.3 1.1-1.1a1.5 1.5 0 0 1 2.1 0L20 5.6a1.5 1.5 0 0 1 0 2.1l-1.1 1.1Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function GroupPage() {
   const { groupId } = Route.useParams();
   const queryClient = useQueryClient();
@@ -163,9 +185,14 @@ function GroupPage() {
   const [newParticipantEmailId, setNewParticipantEmailId] = useState("");
   const [newParticipantManager, setNewParticipantManager] = useState(false);
   const [newParticipantError, setNewParticipantError] = useState<string | null>(null);
+  const [isShareCopied, setIsShareCopied] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [renameDraftName, setRenameDraftName] = useState("");
 
   const timeoutRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
+  const shareFeedbackTimeoutRef = useRef<number | null>(null);
   const rotationRef = useRef(0);
   const currentSpinIdRef = useRef<string | null>(null);
   const currentSpinWinnerIdRef = useRef<string | null>(null);
@@ -191,6 +218,7 @@ function GroupPage() {
 
   const participants = useMemo(() => participantsQuery.data ?? [], [participantsQuery.data]);
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
+  const isRealtimeConnected = realtimeStatus === "open";
   const wheelSegments = useMemo(
     () => weightedSegments(eligibleParticipants),
     [eligibleParticipants],
@@ -209,6 +237,13 @@ function GroupPage() {
     if (tickRef.current !== null) {
       window.clearInterval(tickRef.current);
       tickRef.current = null;
+    }
+  };
+
+  const clearShareFeedbackTimer = () => {
+    if (shareFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(shareFeedbackTimeoutRef.current);
+      shareFeedbackTimeoutRef.current = null;
     }
   };
 
@@ -298,6 +333,11 @@ function GroupPage() {
         break;
       }
 
+      case "group.updated": {
+        queryClient.setQueryData<GroupData>(["groups", groupId], event.payload.group);
+        break;
+      }
+
       case "participant.added": {
         queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
           dedupeParticipantsById([...current, event.payload.participant]),
@@ -380,6 +420,7 @@ function GroupPage() {
   useEffect(() => {
     return () => {
       clearSpinTimers();
+      clearShareFeedbackTimer();
     };
   }, []);
 
@@ -447,6 +488,18 @@ function GroupPage() {
     onError: (error: Error) => {
       setIsSpinRequestPending(false);
       setSpinError(error.message);
+    },
+  });
+
+  const renameGroupMutation = useMutation({
+    mutationFn: (name: string) => groupsApi.renameGroup({ groupId, name }),
+    onError: (error: Error) => {
+      setRenameError(error.message);
+    },
+    onSuccess: (nextGroup) => {
+      queryClient.setQueryData<GroupData>(["groups", groupId], nextGroup);
+      setRenameError(null);
+      setIsRenameModalOpen(false);
     },
   });
 
@@ -663,19 +716,97 @@ function GroupPage() {
     return <p className="status-text">Group unavailable.</p>;
   }
 
+  const onCopyGroupLink = async () => {
+    void audioEngine.playClick();
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setIsShareCopied(true);
+      clearShareFeedbackTimer();
+      shareFeedbackTimeoutRef.current = window.setTimeout(() => {
+        setIsShareCopied(false);
+        shareFeedbackTimeoutRef.current = null;
+      }, 1600);
+    } catch {
+      setIsShareCopied(false);
+      // Ignore clipboard errors when unavailable in the current browser context.
+    }
+  };
+
+  const openRenameModal = () => {
+    void audioEngine.playClick();
+    setRenameDraftName(group.name);
+    setRenameError(null);
+    setIsRenameModalOpen(true);
+  };
+
+  const onConfirmRenameGroup = () => {
+    const normalized = renameDraftName.trim().replace(/\s+/g, " ");
+    if (!normalized || normalized.length > 60) {
+      setRenameError("Name must be between 1 and 60 characters.");
+      return;
+    }
+
+    if (normalized === group.name) {
+      setRenameError(null);
+      return;
+    }
+
+    setRenameError(null);
+    renameGroupMutation.mutate(normalized);
+  };
+
   return (
     <section className="game-layout reveal-up">
       <header className="panel header-panel">
-        <div>
+        <div className="header-title-block">
           <p className="eyebrow">Group Lobby</p>
-          <h1>{group.name}</h1>
-          <p className="muted-text">ID: {group.id}</p>
-          <p className="muted-text">Realtime: {realtimeStatus}</p>
+          <div className="group-title-row">
+            <h1>{group.name}</h1>
+            <button
+              type="button"
+              className="ghost-btn icon-btn title-rename-btn"
+              aria-label={
+                renameGroupMutation.isPending ? "Renaming current group" : "Rename current group"
+              }
+              title={renameGroupMutation.isPending ? "Renaming current group" : "Rename current group"}
+              onClick={openRenameModal}
+              disabled={renameGroupMutation.isPending}
+            >
+              <IconEdit />
+              <span className="sr-only">Rename group</span>
+            </button>
+            <button
+              type="button"
+              className={`ghost-btn icon-btn title-share-btn ${isShareCopied ? "title-share-btn-copied" : ""}`}
+              aria-label={isShareCopied ? "Current group URL copied" : "Copy current group URL"}
+              title={
+                isShareCopied
+                  ? "Current group URL copied"
+                  : "Copies the URL of the current group"
+              }
+              onClick={() => {
+                void onCopyGroupLink();
+              }}
+            >
+              {isShareCopied ? <IconCheck /> : <IconShare />}
+              <span className="sr-only">{isShareCopied ? "Group link copied" : "Copy group link"}</span>
+            </button>
+            {isShareCopied && (
+              <span className="copy-feedback" role="status" aria-live="polite">
+                Copied
+              </span>
+            )}
+          </div>
+          <p
+            className={`connection-status ${
+              isRealtimeConnected ? "connection-status-connected" : "connection-status-disconnected"
+            }`}
+          >
+            <span className="connection-status-dot" aria-hidden />
+            <span>{isRealtimeConnected ? "Connected" : "Disconnected"}</span>
+          </p>
         </div>
         <div className="header-actions">
-          <Link className="ghost-btn header-history-link" to="/groups/$groupId/history" params={{ groupId }}>
-            View History
-          </Link>
           <Link
             className="ghost-btn header-history-link"
             to="/"
@@ -719,10 +850,6 @@ function GroupPage() {
               Manage Participants
             </button>
           </div>
-          <p className="muted-text">
-            Only present/absent is editable here. Add, remove, email and manager are managed in the
-            modal.
-          </p>
           {spinError && <p className="error-text">{spinError}</p>}
 
           <ul className="participant-list">
@@ -760,6 +887,13 @@ function GroupPage() {
               </li>
             ))}
           </ul>
+          <Link
+            className="ghost-btn participant-history-link"
+            to="/groups/$groupId/history"
+            params={{ groupId }}
+          >
+            View History
+          </Link>
         </aside>
 
         <div className="panel wheel-panel">
@@ -833,7 +967,7 @@ function GroupPage() {
                     pointerEvents="none"
                   />
                 )}
-                <circle r="24" fill="#f6c35b" />
+                {eligibleParticipants.length > 0 && <circle r="24" fill="#f6c35b" />}
               </g>
             </svg>
           </div>
@@ -851,6 +985,48 @@ function GroupPage() {
           )}
         </div>
       </div>
+
+      {isRenameModalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="rename-group-heading">
+            <h2 id="rename-group-heading">Rename Group</h2>
+            <p className="muted-text">Choose a new name between 1 and 60 characters.</p>
+            <input
+              className="text-input"
+              value={renameDraftName}
+              onChange={(event) => setRenameDraftName(event.target.value)}
+              maxLength={60}
+              autoFocus
+            />
+            {renameError && <p className="error-text">{renameError}</p>}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => {
+                  void audioEngine.playClick();
+                  onConfirmRenameGroup();
+                }}
+                disabled={renameGroupMutation.isPending}
+              >
+                {renameGroupMutation.isPending ? "Renaming..." : "Rename"}
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  void audioEngine.playClick();
+                  setRenameError(null);
+                  setIsRenameModalOpen(false);
+                }}
+                disabled={renameGroupMutation.isPending}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isParticipantModalOpen && (
         <div className="modal-backdrop" role="presentation">

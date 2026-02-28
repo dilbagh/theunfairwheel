@@ -77,8 +77,16 @@ export type SpinResultDismissedEvent = EventEnvelope<
   }
 >;
 
+export type GroupUpdatedEvent = EventEnvelope<
+  "group.updated",
+  {
+    group: Group;
+  }
+>;
+
 export type GroupRealtimeEvent =
   | GroupSnapshotEvent
+  | GroupUpdatedEvent
   | ParticipantAddedEvent
   | ParticipantUpdatedEvent
   | ParticipantRemovedEvent

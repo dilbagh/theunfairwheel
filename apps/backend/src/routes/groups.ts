@@ -13,6 +13,7 @@ type ErrorBody = {
 };
 
 const createGroupBody = validator("json", (value) => value as { name?: string });
+const renameGroupBody = validator("json", (value) => value as { name?: string });
 const addParticipantBody = validator("json", (value) =>
   value as { name?: string; emailId?: string | null; manager?: boolean },
 );
@@ -97,6 +98,33 @@ const groupsRoutes = new Hono<AppEnv>()
     }
 
     return c.json(await response.json());
+  })
+  .patch("/groups/:groupId", renameGroupBody, async (c) => {
+    const groupId = c.req.param("groupId");
+    const body = c.req.valid("json");
+
+    const response = await callDurableObject(groupStub(c, groupId), "/group", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: body.name }),
+    });
+
+    if (!response.ok) {
+      return c.json(
+        { error: await parseError(response) },
+        response.status as 400 | 404 | 500,
+      );
+    }
+
+    const renamedGroup = (await response.json()) as Group;
+    const indexRecord: GroupIndexRecord = {
+      id: renamedGroup.id,
+      name: renamedGroup.name,
+      createdAt: renamedGroup.createdAt,
+    };
+    await c.env.GROUP_INDEX_KV.put(`group:${renamedGroup.id}`, JSON.stringify(indexRecord));
+
+    return c.json(renamedGroup);
   })
   .get("/groups/:groupId/ws", async (c) => {
     const groupId = c.req.param("groupId");

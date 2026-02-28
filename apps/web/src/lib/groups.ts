@@ -23,6 +23,7 @@ export type Participant = {
 export type GroupsApi = {
   createGroup(input: { name: string }): Promise<Group>;
   getGroup(input: { id: string }): Promise<Group>;
+  renameGroup(input: { groupId: string; name: string }): Promise<Group>;
   requestSpin(input: { groupId: string }): Promise<{ spin: GroupSpinState }>;
   listSpinHistory(input: { groupId: string }): Promise<SpinHistoryItem[]>;
   saveSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
@@ -94,6 +95,17 @@ const httpGroupsApi: GroupsApi = {
   async getGroup(input) {
     const response = await apiClient.groups[":groupId"].$get({
       param: { groupId: input.id },
+    });
+
+    return expectJson<Group>(response);
+  },
+
+  async renameGroup(input) {
+    const response = await apiClient.groups[":groupId"].$patch({
+      param: { groupId: input.groupId },
+      json: {
+        name: input.name,
+      },
     });
 
     return expectJson<Group>(response);
