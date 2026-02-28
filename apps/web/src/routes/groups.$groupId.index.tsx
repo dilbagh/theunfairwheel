@@ -23,13 +23,17 @@ type ParticipantMutationContext = {
   previousParticipants: Participant[];
 };
 
-type AddParticipantMutationContext = ParticipantMutationContext & {
-  optimisticId: string;
+type ParticipantDraft = {
+  id: string;
+  participantId: string | null;
+  name: string;
+  active: boolean;
+  spinsSinceLastWon: number;
+  emailId: string;
+  manager: boolean;
 };
 
-function normalizeParticipantName(name: string): string {
-  return name.trim().toLowerCase();
-}
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function dedupeParticipantsById(participants: Participant[]): Participant[] {
   const seen = new Set<string>();
@@ -45,6 +49,36 @@ function dedupeParticipantsById(participants: Participant[]): Participant[] {
   }
 
   return result;
+}
+
+function normalizeEmailInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (!EMAIL_PATTERN.test(trimmed)) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function isValidOptionalEmail(value: string): boolean {
+  const trimmed = value.trim();
+  return !trimmed || EMAIL_PATTERN.test(trimmed);
+}
+
+function participantToDraft(participant: Participant): ParticipantDraft {
+  return {
+    id: participant.id,
+    participantId: participant.id,
+    name: participant.name,
+    active: participant.active,
+    spinsSinceLastWon: participant.spinsSinceLastWon,
+    emailId: participant.emailId ?? "",
+    manager: participant.manager,
+  };
 }
 
 function IconVolumeOn() {
@@ -113,8 +147,6 @@ function IconPlus() {
 function GroupPage() {
   const { groupId } = Route.useParams();
   const queryClient = useQueryClient();
-  const [participantName, setParticipantName] = useState("");
-  const [participantError, setParticipantError] = useState<string | null>(null);
   const [rotation, setRotation] = useState(0);
   const [spinDurationMs, setSpinDurationMs] = useState(0);
   const [isSpinning, setIsSpinning] = useState(false);
@@ -124,6 +156,14 @@ function GroupPage() {
   const [isMuted, setIsMuted] = useState(audioEngine.isMuted());
   const [realtimeStatus, setRealtimeStatus] = useState<GroupRealtimeStatus>("connecting");
   const [isSpinRequestPending, setIsSpinRequestPending] = useState(false);
+  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
+  const [participantModalError, setParticipantModalError] = useState<string | null>(null);
+  const [participantDrafts, setParticipantDrafts] = useState<ParticipantDraft[]>([]);
+  const [newParticipantName, setNewParticipantName] = useState("");
+  const [newParticipantEmailId, setNewParticipantEmailId] = useState("");
+  const [newParticipantManager, setNewParticipantManager] = useState(false);
+  const [newParticipantError, setNewParticipantError] = useState<string | null>(null);
+
   const timeoutRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
   const rotationRef = useRef(0);
@@ -259,26 +299,9 @@ function GroupPage() {
       }
 
       case "participant.added": {
-        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) => {
-          if (current.some((participant) => participant.id === event.payload.participant.id)) {
-            return current;
-          }
-
-          const optimisticIndex = current.findIndex(
-            (participant) =>
-              participant.id.startsWith("optimistic-") &&
-              normalizeParticipantName(participant.name) ===
-                normalizeParticipantName(event.payload.participant.name),
-          );
-
-          if (optimisticIndex >= 0) {
-            const next = [...current];
-            next[optimisticIndex] = event.payload.participant;
-            return dedupeParticipantsById(next);
-          }
-
-          return dedupeParticipantsById([...current, event.payload.participant]);
-        });
+        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
+          dedupeParticipantsById([...current, event.payload.participant]),
+        );
         break;
       }
 
@@ -366,76 +389,6 @@ function GroupPage() {
     }
   }, [groupQuery.data]);
 
-  const addMutation = useMutation<Participant, Error, string, AddParticipantMutationContext>({
-    mutationFn: (name: string) => groupsApi.addParticipant({ groupId, name }),
-    onMutate: async (name) => {
-      await queryClient.cancelQueries({ queryKey: ["participants", groupId] });
-      const previousParticipants =
-        queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
-
-      const optimisticId = `optimistic-${crypto.randomUUID()}`;
-      const optimisticParticipant: Participant = {
-        id: optimisticId,
-        name,
-        active: true,
-        spinsSinceLastWon: 0,
-      };
-
-      queryClient.setQueryData<Participant[]>(["participants", groupId], [
-        ...previousParticipants,
-        optimisticParticipant,
-      ]);
-
-      setParticipantError(null);
-      setParticipantName("");
-
-      return { previousParticipants, optimisticId };
-    },
-    onError: (error, _variables, context) => {
-      if (context) {
-        queryClient.setQueryData<Participant[]>(
-          ["participants", groupId],
-          context.previousParticipants,
-        );
-      }
-      setParticipantError(error.message);
-    },
-    onSuccess: (participant, _name, context) => {
-      if (!context) {
-        return;
-      }
-
-      queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
-        dedupeParticipantsById(
-          current.map((item) => (item.id === context.optimisticId ? participant : item)),
-        ),
-      );
-    },
-  });
-
-  const removeMutation = useMutation<void, Error, string, ParticipantMutationContext>({
-    mutationFn: (participantId: string) => groupsApi.removeParticipant({ groupId, participantId }),
-    onMutate: async (participantId) => {
-      await queryClient.cancelQueries({ queryKey: ["participants", groupId] });
-      const previousParticipants =
-        queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
-
-      queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
-        current.filter((participant) => participant.id !== participantId),
-      );
-
-      return { previousParticipants };
-    },
-    onError: (_error, _variables, context) => {
-      if (context) {
-        queryClient.setQueryData<Participant[]>(
-          ["participants", groupId],
-          context.previousParticipants,
-        );
-      }
-    },
-  });
-
   const togglePresenceMutation = useMutation<
     Participant,
     Error,
@@ -464,6 +417,24 @@ function GroupPage() {
           context.previousParticipants,
         );
       }
+    },
+  });
+
+  const commitParticipantsMutation = useMutation({
+    mutationFn: (input: {
+      adds: Array<{ name: string; emailId: string | null; manager: boolean }>;
+      updates: Array<{ participantId: string; emailId: string | null; manager: boolean }>;
+      removes: string[];
+    }) => groupsApi.commitParticipants({ groupId, ...input }),
+    onError: (error: Error) => {
+      setParticipantModalError(error.message);
+    },
+    onSuccess: async (nextParticipants) => {
+      queryClient.setQueryData<Participant[]>(["participants", groupId], nextParticipants);
+      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
+      setParticipantModalError(null);
+      setNewParticipantError(null);
+      setIsParticipantModalOpen(false);
     },
   });
 
@@ -500,18 +471,158 @@ function GroupPage() {
     },
   });
 
-  const onAddParticipant = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const normalized = participantName.trim();
-    setParticipantError(null);
+  const openParticipantModal = () => {
+    setParticipantDrafts(participants.map(participantToDraft));
+    setParticipantModalError(null);
+    setNewParticipantError(null);
+    setNewParticipantName("");
+    setNewParticipantEmailId("");
+    setNewParticipantManager(false);
+    setIsParticipantModalOpen(true);
+  };
 
-    if (!normalized) {
-      setParticipantError("Participant name is required.");
+  const onAddDraftParticipant = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const name = newParticipantName.trim();
+    const normalizedEmail = normalizeEmailInput(newParticipantEmailId);
+    const hasEmailInput = !!newParticipantEmailId.trim();
+
+    setNewParticipantError(null);
+    setParticipantModalError(null);
+
+    if (!name || name.length > 60) {
+      setNewParticipantError("Name must be between 1 and 60 characters.");
+      return;
+    }
+
+    const duplicateName = participantDrafts.some(
+      (participant) => participant.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicateName) {
+      setNewParticipantError("Participant with this name already exists.");
+      return;
+    }
+
+    if (hasEmailInput && !normalizedEmail) {
+      setNewParticipantError("Email must be a valid email address.");
+      return;
+    }
+
+    if (newParticipantManager && !normalizedEmail) {
+      setNewParticipantError("Manager requires a valid email.");
+      return;
+    }
+
+    setParticipantDrafts((current) => [
+      ...current,
+      {
+        id: `new-${crypto.randomUUID()}`,
+        participantId: null,
+        name,
+        active: true,
+        spinsSinceLastWon: 0,
+        emailId: normalizedEmail ?? "",
+        manager: newParticipantManager,
+      },
+    ]);
+
+    setNewParticipantName("");
+    setNewParticipantEmailId("");
+    setNewParticipantManager(false);
+  };
+
+  const hasDraftValidationError = useMemo(
+    () => participantDrafts.some((participant) => !isValidOptionalEmail(participant.emailId)),
+    [participantDrafts],
+  );
+
+  const hasDraftChanges = useMemo(() => {
+    if (participantDrafts.length !== participants.length) {
+      return true;
+    }
+
+    const participantsById = new Map(participants.map((participant) => [participant.id, participant]));
+
+    for (const draft of participantDrafts) {
+      if (!draft.participantId) {
+        return true;
+      }
+
+      const current = participantsById.get(draft.participantId);
+      if (!current) {
+        return true;
+      }
+
+      const draftEmail = normalizeEmailInput(draft.emailId);
+      const draftManager = draftEmail ? draft.manager : false;
+
+      if ((current.emailId ?? null) !== draftEmail || current.manager !== draftManager) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [participantDrafts, participants]);
+
+  const onConfirmParticipantModal = () => {
+    setParticipantModalError(null);
+
+    if (hasDraftValidationError) {
+      setParticipantModalError("Fix invalid email fields before confirming.");
+      return;
+    }
+
+    const currentById = new Map(participants.map((participant) => [participant.id, participant]));
+    const draftByParticipantId = new Map(
+      participantDrafts
+        .filter((participant): participant is ParticipantDraft & { participantId: string } =>
+          Boolean(participant.participantId),
+        )
+        .map((participant) => [participant.participantId, participant]),
+    );
+
+    const adds: Array<{ name: string; emailId: string | null; manager: boolean }> = [];
+    const updates: Array<{ participantId: string; emailId: string | null; manager: boolean }> = [];
+    const removes: string[] = [];
+
+    for (const participant of participants) {
+      const draft = draftByParticipantId.get(participant.id);
+      if (!draft) {
+        removes.push(participant.id);
+        continue;
+      }
+
+      const emailId = normalizeEmailInput(draft.emailId);
+      const manager = emailId ? draft.manager : false;
+      if ((participant.emailId ?? null) !== emailId || participant.manager !== manager) {
+        updates.push({ participantId: participant.id, emailId, manager });
+      }
+    }
+
+    for (const draft of participantDrafts) {
+      if (draft.participantId) {
+        continue;
+      }
+
+      const emailId = normalizeEmailInput(draft.emailId);
+      const manager = emailId ? draft.manager : false;
+      adds.push({ name: draft.name, emailId, manager });
+    }
+
+    if (!adds.length && !updates.length && !removes.length) {
+      setParticipantModalError("No participant changes to apply.");
+      return;
+    }
+
+    const hasRemovedButReusedIds = removes.some((participantId) => !currentById.has(participantId));
+    if (hasRemovedButReusedIds) {
+      setParticipantModalError("Participant list changed. Reopen the modal and try again.");
       return;
     }
 
     void audioEngine.playClick();
-    addMutation.mutate(normalized);
+    commitParticipantsMutation.mutate({ adds, updates, removes });
   };
 
   const onSpin = () => {
@@ -595,29 +706,22 @@ function GroupPage() {
 
       <div className="content-grid">
         <aside className="panel side-panel">
-          <h2>Participants</h2>
-          <form className="form-row" onSubmit={onAddParticipant}>
-            <input
-              className="text-input"
-              value={participantName}
-              onChange={(event) => setParticipantName(event.target.value)}
-              placeholder="Add a name"
-              maxLength={60}
-            />
+          <div className="participant-panel-header">
+            <h2>Participants</h2>
             <button
-              type="submit"
-              className="primary-btn icon-btn add-btn"
-              disabled={addMutation.isPending}
-              aria-label="Add participant"
-              title="Add participant"
+              type="button"
+              className="ghost-btn manage-participants-btn"
+              onClick={() => {
+                void audioEngine.playClick();
+                openParticipantModal();
+              }}
             >
-              <IconPlus />
-              <span className="sr-only">Add participant</span>
+              Manage Participants
             </button>
-          </form>
-          {participantError && <p className="error-text">{participantError}</p>}
+          </div>
           <p className="muted-text">
-            Inactive participants stay in the list but are excluded from the wheel.
+            Only present/absent is editable here. Add, remove, email and manager are managed in the
+            modal.
           </p>
           {spinError && <p className="error-text">{spinError}</p>}
 
@@ -653,16 +757,6 @@ function GroupPage() {
                     Spins since win: {participant.spinsSinceLastWon}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="danger-btn icon-btn remove-btn"
-                  aria-label={`Remove ${participant.name}`}
-                  title={`Remove ${participant.name}`}
-                  onClick={() => removeMutation.mutate(participant.id)}
-                >
-                  <IconTrash />
-                  <span className="sr-only">Remove</span>
-                </button>
               </li>
             ))}
           </ul>
@@ -757,6 +851,146 @@ function GroupPage() {
           )}
         </div>
       </div>
+
+      {isParticipantModalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal participant-modal" role="dialog" aria-modal="true" aria-labelledby="manage-participants-heading">
+            <h2 id="manage-participants-heading">Manage Participants</h2>
+            <p className="muted-text">Changes apply only when you confirm.</p>
+
+            <form className="participant-add-form" onSubmit={onAddDraftParticipant}>
+              <input
+                className="text-input"
+                value={newParticipantName}
+                onChange={(event) => setNewParticipantName(event.target.value)}
+                placeholder="New participant name"
+                maxLength={60}
+              />
+              <input
+                className="text-input"
+                value={newParticipantEmailId}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setNewParticipantEmailId(nextValue);
+                  if (!normalizeEmailInput(nextValue)) {
+                    setNewParticipantManager(false);
+                  }
+                }}
+                placeholder="Email (optional)"
+                maxLength={120}
+              />
+              <label className="participant-manager-field">
+                <input
+                  type="checkbox"
+                  checked={newParticipantManager}
+                  onChange={(event) => setNewParticipantManager(event.target.checked)}
+                  disabled={!normalizeEmailInput(newParticipantEmailId)}
+                />
+                Manager
+              </label>
+              <button type="submit" className="primary-btn icon-btn add-btn" aria-label="Add participant to draft" title="Add participant to draft">
+                <span className="add-btn-glyph" aria-hidden>
+                  +
+                </span>
+                <span className="sr-only">Add participant</span>
+              </button>
+            </form>
+
+            {newParticipantError && <p className="error-text">{newParticipantError}</p>}
+
+            <ul className="participant-edit-list">
+              {participantDrafts.length === 0 && <li className="muted-text">No participants in draft.</li>}
+              {participantDrafts.map((participant) => {
+                const validEmail = normalizeEmailInput(participant.emailId);
+                return (
+                  <li key={participant.id} className="participant-edit-item">
+                    <div className="participant-edit-name">{participant.name}</div>
+                    <input
+                      className="text-input"
+                      value={participant.emailId}
+                      onChange={(event) => {
+                        const nextEmailId = event.target.value;
+                        setParticipantDrafts((current) =>
+                          current.map((item) => {
+                            if (item.id !== participant.id) {
+                              return item;
+                            }
+
+                            return {
+                              ...item,
+                              emailId: nextEmailId,
+                              manager: normalizeEmailInput(nextEmailId) ? item.manager : false,
+                            };
+                          }),
+                        );
+                      }}
+                      placeholder="Email (optional)"
+                      maxLength={120}
+                    />
+                    <label className="participant-manager-field">
+                      <input
+                        type="checkbox"
+                        checked={participant.manager}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setParticipantDrafts((current) =>
+                            current.map((item) =>
+                              item.id === participant.id ? { ...item, manager: checked } : item,
+                            ),
+                          );
+                        }}
+                        disabled={!validEmail}
+                      />
+                      Manager
+                    </label>
+                    <button
+                      type="button"
+                      className="danger-btn icon-btn remove-btn"
+                      aria-label={`Remove ${participant.name}`}
+                      title={`Remove ${participant.name}`}
+                      onClick={() => {
+                        setParticipantDrafts((current) =>
+                          current.filter((item) => item.id !== participant.id),
+                        );
+                      }}
+                    >
+                      <IconTrash />
+                      <span className="sr-only">Remove</span>
+                    </button>
+                    {!isValidOptionalEmail(participant.emailId) && (
+                      <p className="error-text participant-inline-error">Invalid email format.</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={onConfirmParticipantModal}
+                disabled={commitParticipantsMutation.isPending || hasDraftValidationError || !hasDraftChanges}
+              >
+                Confirm Changes
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  setParticipantModalError(null);
+                  setNewParticipantError(null);
+                  setIsParticipantModalOpen(false);
+                }}
+                disabled={commitParticipantsMutation.isPending}
+              >
+                Cancel
+              </button>
+            </div>
+            {participantModalError && <p className="error-text">{participantModalError}</p>}
+          </div>
+        </div>
+      )}
 
       {winner && (
         <div className="modal-backdrop" role="presentation">

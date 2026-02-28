@@ -13,8 +13,23 @@ type ErrorBody = {
 };
 
 const createGroupBody = validator("json", (value) => value as { name?: string });
-const addParticipantBody = validator("json", (value) => value as { name?: string });
-const updateParticipantBody = validator("json", (value) => value as { active?: boolean });
+const addParticipantBody = validator("json", (value) =>
+  value as { name?: string; emailId?: string | null; manager?: boolean },
+);
+const updateParticipantBody = validator("json", (value) =>
+  value as { active?: boolean; emailId?: string | null; manager?: boolean },
+);
+const commitParticipantsBody = validator("json", (value) =>
+  value as {
+    adds?: Array<{ name?: string; emailId?: string | null; manager?: boolean }>;
+    updates?: Array<{
+      participantId?: string;
+      emailId?: string | null;
+      manager?: boolean;
+    }>;
+    removes?: string[];
+  },
+);
 
 function groupStub(c: { env: AppEnv["Bindings"] }, groupId: string): DurableObjectStubLike {
   const id = c.env.GROUPS_DO.idFromName(groupId);
@@ -200,6 +215,25 @@ const groupsRoutes = new Hono<AppEnv>()
       return c.json(
         { error: await parseError(response) },
         response.status as 400 | 404 | 500,
+      );
+    }
+
+    return c.json(await response.json());
+  })
+  .post("/groups/:groupId/participants/commit", commitParticipantsBody, async (c) => {
+    const groupId = c.req.param("groupId");
+    const body = c.req.valid("json");
+
+    const response = await callDurableObject(groupStub(c, groupId), "/participants/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      return c.json(
+        { error: await parseError(response) },
+        response.status as 400 | 404 | 409 | 500,
       );
     }
 

@@ -302,6 +302,20 @@ input[type="checkbox"]:focus-visible {
   padding: 1rem;
 }
 
+.participant-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.manage-participants-btn {
+  padding: 0.42rem 0.72rem;
+  font-size: 0.82rem;
+  min-height: 2rem;
+  line-height: 1;
+}
+
 .toggle-row {
   margin-top: 0.85rem;
   display: flex;
@@ -320,7 +334,7 @@ input[type="checkbox"]:focus-visible {
 
 .participant-item {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
   gap: 0.55rem;
   align-items: center;
 }
@@ -397,6 +411,73 @@ input[type="checkbox"]:focus-visible {
 .inactive-name {
   color: #7e96a8;
   text-decoration: line-through;
+}
+
+.modal.participant-modal {
+  width: min(840px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  text-align: left;
+}
+
+.participant-add-form {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(200px, 1fr) max-content auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.participant-add-form .add-btn {
+  color: #eaffff;
+  border-color: rgba(6, 16, 30, 0.35);
+}
+
+.participant-add-form .add-btn-glyph {
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #00111f;
+  transform: translateY(-1px);
+}
+
+.participant-edit-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.participant-edit-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(220px, 1.4fr) max-content auto;
+  gap: 0.5rem;
+  align-items: center;
+  border: 1px solid rgba(38, 222, 255, 0.2);
+  border-radius: 0.7rem;
+  padding: 0.55rem;
+  background: rgba(5, 16, 28, 0.58);
+}
+
+.participant-edit-name {
+  min-width: 0;
+  font-weight: 700;
+  color: #d8f5ff;
+}
+
+.participant-manager-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #c4deec;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.participant-inline-error {
+  grid-column: 1 / -1;
+  margin: 0.1rem 0 0;
 }
 
 .sound-btn {
@@ -550,6 +631,14 @@ input[type="checkbox"]:focus-visible {
 
   .header-actions {
     width: 100%;
+  }
+
+  .participant-add-form {
+    grid-template-columns: 1fr;
+  }
+
+  .participant-edit-item {
+    grid-template-columns: 1fr;
   }
 }
 

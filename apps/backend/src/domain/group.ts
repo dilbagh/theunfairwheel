@@ -10,6 +10,8 @@ export type Participant = {
   id: string;
   name: string;
   active: boolean;
+  emailId: string | null;
+  manager: boolean;
   spinsSinceLastWon: number;
 };
 

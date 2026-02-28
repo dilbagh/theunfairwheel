@@ -15,6 +15,8 @@ export type Participant = {
   id: string;
   name: string;
   active: boolean;
+  emailId: string | null;
+  manager: boolean;
   spinsSinceLastWon: number;
 };
 
@@ -26,7 +28,12 @@ export type GroupsApi = {
   saveSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
   discardSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
   listParticipants(input: { groupId: string }): Promise<Participant[]>;
-  addParticipant(input: { groupId: string; name: string }): Promise<Participant>;
+  addParticipant(input: {
+    groupId: string;
+    name: string;
+    emailId?: string | null;
+    manager?: boolean;
+  }): Promise<Participant>;
   removeParticipant(input: {
     groupId: string;
     participantId: string;
@@ -36,6 +43,12 @@ export type GroupsApi = {
     participantId: string;
     active: boolean;
   }): Promise<Participant>;
+  commitParticipants(input: {
+    groupId: string;
+    adds: Array<{ name: string; emailId: string | null; manager: boolean }>;
+    updates: Array<{ participantId: string; emailId: string | null; manager: boolean }>;
+    removes: string[];
+  }): Promise<Participant[]>;
 };
 
 export type { GroupRealtimeEvent, GroupSpinState };
@@ -176,6 +189,19 @@ const httpGroupsApi: GroupsApi = {
     );
 
     return expectJson<Participant>(response);
+  },
+
+  async commitParticipants(input) {
+    const response = await apiClient.groups[":groupId"].participants.commit.$post({
+      param: { groupId: input.groupId },
+      json: {
+        adds: input.adds,
+        updates: input.updates,
+        removes: input.removes,
+      },
+    });
+
+    return expectJson<Participant[]>(response);
   },
 };
 

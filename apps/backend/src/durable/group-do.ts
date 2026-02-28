@@ -29,9 +29,12 @@ type ErrorBody = {
 const GROUP_STATE_KEY = "group-state";
 const MAX_SPIN_HISTORY_ITEMS = 20;
 const PENDING_RESULT_TTL_MS = 10 * 60 * 1000;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 type CloudflareWebSocket = WebSocket & { accept(): void };
 
-type ParticipantLike = Omit<Participant, "spinsSinceLastWon"> & {
+type ParticipantLike = Omit<Participant, "emailId" | "manager" | "spinsSinceLastWon"> & {
+  emailId?: unknown;
+  manager?: unknown;
   spinsSinceLastWon?: unknown;
 };
 
@@ -66,8 +69,17 @@ function cloneParticipants(participants: ParticipantLike[]): Participant[] {
 }
 
 function normalizeParticipant(participant: ParticipantLike): Participant {
+  const emailId =
+    typeof participant.emailId === "string" &&
+    participant.emailId.trim() &&
+    EMAIL_PATTERN.test(participant.emailId.trim())
+      ? participant.emailId.trim()
+      : null;
+
   return {
     ...participant,
+    emailId,
+    manager: typeof participant.manager === "boolean" ? participant.manager && emailId !== null : false,
     spinsSinceLastWon:
       typeof participant.spinsSinceLastWon === "number" &&
       Number.isFinite(participant.spinsSinceLastWon) &&
@@ -75,6 +87,27 @@ function normalizeParticipant(participant: ParticipantLike): Participant {
         ? Math.floor(participant.spinsSinceLastWon)
         : 0,
   };
+}
+
+function normalizeEmailId(emailId: unknown): string | null {
+  if (typeof emailId === "undefined" || emailId === null) {
+    return null;
+  }
+
+  if (typeof emailId !== "string") {
+    throw new Error("emailId must be a string.");
+  }
+
+  const trimmed = emailId.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (!EMAIL_PATTERN.test(trimmed)) {
+    throw new Error("emailId must be a valid email address.");
+  }
+
+  return trimmed;
 }
 
 function cloneSpinHistoryItem(item: SpinHistoryItemLike): SpinHistoryItem {
@@ -114,6 +147,24 @@ function pickWeightedWinner(participants: Participant[]): Participant | null {
 
   return participants[participants.length - 1] ?? null;
 }
+
+type AddParticipantBody = {
+  name?: string;
+  emailId?: string | null;
+  manager?: boolean;
+};
+
+type UpdateParticipantBody = {
+  active?: boolean;
+  emailId?: string | null;
+  manager?: boolean;
+};
+
+type CommitParticipantsBody = {
+  adds?: Array<{ name?: string; emailId?: string | null; manager?: boolean }>;
+  updates?: Array<{ participantId?: string; emailId?: string | null; manager?: boolean }>;
+  removes?: string[];
+};
 
 export class GroupDurableObject {
   private readonly sockets = new Map<string, WebSocket>();
@@ -194,8 +245,16 @@ export class GroupDurableObject {
           return this.error(404, "Group not found.");
         }
 
-        const body = (await request.json()) as { name?: string };
+        const body = (await request.json()) as AddParticipantBody;
         const name = validateName(body.name ?? "");
+        const emailId = normalizeEmailId(body.emailId);
+        const manager = body.manager === true;
+        if (typeof body.manager !== "undefined" && typeof body.manager !== "boolean") {
+          return this.error(400, "manager must be a boolean.");
+        }
+        if (manager && !emailId) {
+          return this.error(400, "manager requires a valid emailId.");
+        }
 
         if (
           current.participants.some(
@@ -209,6 +268,8 @@ export class GroupDurableObject {
           id: randomId(),
           name,
           active: true,
+          emailId,
+          manager,
           spinsSinceLastWon: 0,
         };
 
@@ -393,6 +454,190 @@ export class GroupDurableObject {
         return new Response(null, { status: 204 });
       }
 
+      if (request.method === "POST" && url.pathname === "/participants/commit") {
+        const current = await this.loadState();
+        if (!current) {
+          return this.error(404, "Group not found.");
+        }
+
+        const body = (await request.json()) as CommitParticipantsBody;
+        if (typeof body !== "object" || body === null) {
+          return this.error(400, "Invalid request body.");
+        }
+
+        const adds = body.adds ?? [];
+        const updates = body.updates ?? [];
+        const removes = body.removes ?? [];
+
+        if (!Array.isArray(adds) || !Array.isArray(updates) || !Array.isArray(removes)) {
+          return this.error(400, "adds, updates, and removes must be arrays.");
+        }
+
+        const currentById = new Map(current.participants.map((participant) => [participant.id, participant]));
+
+        const removeSet = new Set<string>();
+        for (const participantId of removes) {
+          if (typeof participantId !== "string" || !participantId) {
+            return this.error(400, "Each remove id must be a non-empty string.");
+          }
+          if (!currentById.has(participantId)) {
+            return this.error(404, `Participant not found: ${participantId}`);
+          }
+          if (removeSet.has(participantId)) {
+            return this.error(400, `Duplicate remove participant id: ${participantId}`);
+          }
+          removeSet.add(participantId);
+        }
+
+        const updateMap = new Map<string, { emailId: string | null; manager: boolean }>();
+        for (const update of updates) {
+          if (typeof update !== "object" || update === null) {
+            return this.error(400, "Each update entry must be an object.");
+          }
+
+          const participantId = update.participantId;
+          if (typeof participantId !== "string" || !participantId) {
+            return this.error(400, "Each update participantId must be a non-empty string.");
+          }
+          if (!currentById.has(participantId)) {
+            return this.error(404, `Participant not found: ${participantId}`);
+          }
+          if (removeSet.has(participantId)) {
+            return this.error(400, `Participant cannot be both updated and removed: ${participantId}`);
+          }
+          if (updateMap.has(participantId)) {
+            return this.error(400, `Duplicate update participant id: ${participantId}`);
+          }
+
+          const currentParticipant = currentById.get(participantId);
+          if (!currentParticipant) {
+            return this.error(404, `Participant not found: ${participantId}`);
+          }
+
+          let emailId = currentParticipant.emailId;
+          if (typeof update.emailId !== "undefined") {
+            emailId = normalizeEmailId(update.emailId);
+          }
+
+          let manager = currentParticipant.manager;
+          if (typeof update.manager !== "undefined") {
+            if (typeof update.manager !== "boolean") {
+              return this.error(400, "manager must be a boolean.");
+            }
+            manager = update.manager;
+          }
+
+          if (manager && !emailId) {
+            return this.error(400, "manager requires a valid emailId.");
+          }
+          if (!emailId) {
+            manager = false;
+          }
+
+          updateMap.set(participantId, { emailId, manager });
+        }
+
+        const existingNames = new Set(
+          current.participants
+            .filter((participant) => !removeSet.has(participant.id))
+            .map((participant) => participant.name.toLowerCase()),
+        );
+        const addedParticipants: Participant[] = [];
+        for (const add of adds) {
+          if (typeof add !== "object" || add === null) {
+            return this.error(400, "Each add entry must be an object.");
+          }
+
+          const name = validateName(add.name ?? "");
+          const normalizedName = name.toLowerCase();
+          if (existingNames.has(normalizedName)) {
+            return this.error(409, "Participant with this name already exists.");
+          }
+          existingNames.add(normalizedName);
+
+          if (typeof add.manager !== "undefined" && typeof add.manager !== "boolean") {
+            return this.error(400, "manager must be a boolean.");
+          }
+
+          const emailId = normalizeEmailId(add.emailId);
+          const manager = add.manager === true;
+          if (manager && !emailId) {
+            return this.error(400, "manager requires a valid emailId.");
+          }
+
+          addedParticipants.push({
+            id: randomId(),
+            name,
+            active: true,
+            emailId,
+            manager,
+            spinsSinceLastWon: 0,
+          });
+        }
+
+        current.participants = current.participants
+          .filter((participant) => !removeSet.has(participant.id))
+          .map((participant) => {
+            const updated = updateMap.get(participant.id);
+            if (!updated) {
+              return participant;
+            }
+            return {
+              ...participant,
+              emailId: updated.emailId,
+              manager: updated.manager,
+            };
+          });
+
+        current.participants.push(...addedParticipants);
+
+        const next = await this.bumpAndSave(current);
+        const ts = new Date().toISOString();
+
+        for (const participantId of removeSet) {
+          this.broadcast({
+            type: "participant.removed",
+            groupId: next.group.id,
+            version: next.version,
+            ts,
+            payload: {
+              participantId,
+            },
+          });
+        }
+
+        for (const [participantId] of updateMap) {
+          const participant = next.participants.find((item) => item.id === participantId);
+          if (!participant) {
+            continue;
+          }
+
+          this.broadcast({
+            type: "participant.updated",
+            groupId: next.group.id,
+            version: next.version,
+            ts,
+            payload: {
+              participant,
+            },
+          });
+        }
+
+        for (const participant of addedParticipants) {
+          this.broadcast({
+            type: "participant.added",
+            groupId: next.group.id,
+            version: next.version,
+            ts,
+            payload: {
+              participant,
+            },
+          });
+        }
+
+        return Response.json(next.participants);
+      }
+
       const participantsPathMatch = url.pathname.match(/^\/participants\/([^/]+)$/);
       if (participantsPathMatch && request.method === "PATCH") {
         const current = await this.loadState();
@@ -404,10 +649,13 @@ export class GroupDurableObject {
         if (!participantId) {
           return this.error(400, "Participant id is required.");
         }
-        const body = (await request.json()) as { active?: boolean };
-
-        if (typeof body.active !== "boolean") {
-          return this.error(400, "active must be a boolean.");
+        const body = (await request.json()) as UpdateParticipantBody;
+        if (
+          typeof body.active === "undefined" &&
+          typeof body.emailId === "undefined" &&
+          typeof body.manager === "undefined"
+        ) {
+          return this.error(400, "At least one of active, emailId, or manager must be provided.");
         }
 
         const participant = current.participants.find((item) => item.id === participantId);
@@ -415,7 +663,30 @@ export class GroupDurableObject {
           return this.error(404, "Participant not found.");
         }
 
-        participant.active = body.active;
+        if (typeof body.active !== "undefined") {
+          if (typeof body.active !== "boolean") {
+            return this.error(400, "active must be a boolean.");
+          }
+          participant.active = body.active;
+        }
+
+        if (typeof body.emailId !== "undefined") {
+          participant.emailId = normalizeEmailId(body.emailId);
+        }
+
+        if (typeof body.manager !== "undefined") {
+          if (typeof body.manager !== "boolean") {
+            return this.error(400, "manager must be a boolean.");
+          }
+          participant.manager = body.manager;
+        }
+
+        if (participant.manager && !participant.emailId) {
+          return this.error(400, "manager requires a valid emailId.");
+        }
+        if (!participant.emailId) {
+          participant.manager = false;
+        }
 
         const next = await this.bumpAndSave(current);
         this.broadcast({
