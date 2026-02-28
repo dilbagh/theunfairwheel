@@ -708,7 +708,14 @@ function GroupPage() {
 
                   return (
                     <g key={participant.id}>
-                      <path d={path} fill={segmentColor(index)} opacity={0.86} />
+                      <path
+                        d={path}
+                        fill={segmentColor(index)}
+                        opacity={0.86}
+                        stroke="#d9f3ff"
+                        strokeWidth="2"
+                        strokeLinejoin="round"
+                      />
                       <text
                         x={tx}
                         y={ty}
@@ -723,6 +730,15 @@ function GroupPage() {
                     </g>
                   );
                 })}
+                {eligibleParticipants.length > 0 && (
+                  <circle
+                    r="190"
+                    fill="none"
+                    stroke="#d9f3ff"
+                    strokeWidth="4"
+                    pointerEvents="none"
+                  />
+                )}
                 <circle r="24" fill="#f6c35b" />
               </g>
             </svg>
