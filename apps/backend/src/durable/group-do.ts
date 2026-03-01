@@ -739,9 +739,6 @@ export class GroupDurableObject {
           if (typeof body.active !== "boolean") {
             return this.error(400, "active must be a boolean.");
           }
-          if (participant.id === current.group.ownerParticipantId && body.active === false) {
-            return this.error(400, "Owner participant must remain active.");
-          }
           participant.active = body.active;
         }
 
@@ -772,7 +769,6 @@ export class GroupDurableObject {
           participant.manager = false;
         }
         if (participant.id === current.group.ownerParticipantId) {
-          participant.active = true;
           participant.manager = true;
         }
 

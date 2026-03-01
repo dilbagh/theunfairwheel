@@ -288,9 +288,29 @@ function GroupPage() {
     }
 
     if (tickRef.current !== null) {
-      window.clearInterval(tickRef.current);
+      window.clearTimeout(tickRef.current);
       tickRef.current = null;
     }
+  };
+
+  const scheduleSpinTick = (spinStartedAtMs: number, spinDurationMs: number) => {
+    const elapsedMs = performance.now() - spinStartedAtMs;
+    const progress = Math.min(1, Math.max(0, elapsedMs / spinDurationMs));
+
+    if (progress >= 1) {
+      tickRef.current = null;
+      return;
+    }
+
+    const minDelayMs = 70;
+    const maxDelayMs = 280;
+    const curve = progress ** 2.2;
+    const delayMs = minDelayMs + (maxDelayMs - minDelayMs) * curve;
+
+    tickRef.current = window.setTimeout(() => {
+      void audioEngine.playTick();
+      scheduleSpinTick(spinStartedAtMs, spinDurationMs);
+    }, delayMs);
   };
 
   const clearShareFeedbackTimer = () => {
@@ -351,9 +371,9 @@ function GroupPage() {
     setSpinDurationMs(spin.durationMs);
     setRotation(targetRotation);
 
-    tickRef.current = window.setInterval(() => {
-      void audioEngine.playTick();
-    }, 140);
+    const spinStartedAtMs = performance.now();
+    void audioEngine.playTick();
+    scheduleSpinTick(spinStartedAtMs, spin.durationMs);
 
     timeoutRef.current = window.setTimeout(() => {
       clearSpinTimers();
