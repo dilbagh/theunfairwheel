@@ -22,6 +22,7 @@ html,
 body,
 #app {
   min-height: 100%;
+  width: 100%;
 }
 
 body {
@@ -132,6 +133,7 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .nav-groups-btn {
@@ -417,6 +419,8 @@ input[type="checkbox"]:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .header-history-link {
@@ -434,6 +438,12 @@ input[type="checkbox"]:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.group-title-row h1 {
+  overflow-wrap: anywhere;
 }
 
 .title-rename-btn {
@@ -606,11 +616,13 @@ input[type="checkbox"]:focus-visible {
 .participant-item {
   display: grid;
   grid-template-columns: auto 1fr;
+  grid-template-areas: "toggle meta";
   gap: 0.55rem;
   align-items: center;
 }
 
 .participant-toggle {
+  grid-area: toggle;
   min-width: 6.1rem;
   border-radius: 999px;
   border: 1px solid transparent;
@@ -666,9 +678,11 @@ input[type="checkbox"]:focus-visible {
 
 .participant-name {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .participant-meta {
+  grid-area: meta;
   min-width: 0;
   display: grid;
   gap: 0.2rem;
@@ -824,6 +838,7 @@ input[type="checkbox"]:focus-visible {
   display: flex;
   justify-content: center;
   gap: 0.7rem;
+  flex-wrap: wrap;
 }
 
 .history-layout {
@@ -871,6 +886,7 @@ input[type="checkbox"]:focus-visible {
 .history-participants {
   margin: 0.45rem 0 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .history-back-btn {
@@ -899,6 +915,7 @@ input[type="checkbox"]:focus-visible {
 
   .global-nav-actions {
     width: 100%;
+    justify-content: space-between;
   }
 
   .page-wrap {
@@ -932,6 +949,87 @@ input[type="checkbox"]:focus-visible {
 
   .participant-edit-item {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-frame {
+    padding: 0.65rem 0.7rem 0.8rem;
+  }
+
+  .center-panel {
+    padding: 1.35rem 1rem;
+  }
+
+  .brand-name {
+    font-size: 0.94rem;
+  }
+
+  .header-panel {
+    padding: 0.85rem 0.8rem;
+    gap: 0.75rem;
+  }
+
+  .header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .header-history-link {
+    width: 100%;
+  }
+
+  .participant-item {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "meta"
+      "toggle";
+    gap: 0.42rem;
+  }
+
+  .participant-toggle {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .participant-history-link {
+    margin-top: 0.6rem;
+  }
+
+  .participant-manager-field {
+    white-space: normal;
+  }
+
+  .wheel-wrap {
+    width: min(420px, 100%);
+  }
+
+  .spin-btn {
+    width: 100%;
+  }
+
+  .modal-backdrop {
+    padding: 0.55rem;
+  }
+
+  .group-selector-modal,
+  .modal.participant-modal {
+    width: min(100%, calc(100vw - 1rem));
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .modal {
+    padding: 1rem;
+  }
+
+  .global-footer {
+    padding: 0.65rem 0.8rem;
+  }
+
+  .footer-copy {
+    font-size: 0.82rem;
   }
 }
 

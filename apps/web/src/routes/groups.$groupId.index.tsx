@@ -963,7 +963,7 @@ function GroupPage() {
                       active: !participant.active,
                     })
                   }
-                  disabled={!canManageParticipants}
+                  disabled={!canSpin}
                   aria-label={
                     participant.active
                       ? "Mark participant absent and exclude from wheel"

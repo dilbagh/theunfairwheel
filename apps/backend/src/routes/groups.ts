@@ -609,12 +609,18 @@ const groupsRoutes = new Hono<AppEnv>()
   .patch("/groups/:groupId/participants/:participantId", updateParticipantBody, async (c) => {
     const groupId = c.req.param("groupId");
     const participantId = c.req.param("participantId");
-    const managerAccess = await requireManager(c, groupId);
-    if (managerAccess instanceof Response) {
-      return managerAccess;
+    const participantAccess = await requireParticipant(c, groupId);
+    if (participantAccess instanceof Response) {
+      return participantAccess;
     }
-
     const body = c.req.valid("json");
+    const updatesActive = typeof body.active !== "undefined";
+    const updatesEmail = typeof body.emailId !== "undefined";
+    const updatesManager = typeof body.manager !== "undefined";
+
+    if (!participantAccess.isManager && (updatesEmail || updatesManager || !updatesActive)) {
+      return c.json({ error: "Manager access is required." }, 403);
+    }
 
     const response = await callDurableObject(
       groupStub(c, groupId),
