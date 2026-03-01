@@ -1,134 +1,135 @@
-# Turborepo starter
+# The Unfair Wheel
 
-This Turborepo starter is maintained by the Turborepo core team.
+The Unfair Wheel is a real-time, weighted random picker for teams.
 
-## Using this example
+It lets a group spin a wheel to pick a winner, while biasing odds toward participants who have not won recently. The app is built for repeated team rituals (standups, demos, retros, random assignments) where pure randomness can feel unfair over time.
 
-Run the following command:
+## What the project does
 
-```sh
-npx create-turbo@latest
+- Creates private groups (authenticated with Clerk).
+- Adds/removes/manages participants per group.
+- Runs weighted spins:
+  - Every active participant has a weight of `spinsSinceLastWon + 1`.
+  - People who have not won recently get higher probability.
+- Stores recent spin history (up to 20 entries).
+- Streams real-time updates to all connected clients via WebSocket events from a Durable Object.
+- Supports bookmarking groups per user.
+
+## Tech stack
+
+- Frontend: React + Vite + TanStack Router + React Query (`apps/web`)
+- Backend API: Hono on Cloudflare Workers (`apps/backend`)
+- Realtime/state: Cloudflare Durable Objects
+- Metadata/indexing: Cloudflare KV
+- Auth: Clerk
+- Monorepo: pnpm workspaces + Turborepo
+
+## Repository structure
+
+- `apps/web`: browser app UI
+- `apps/backend`: Cloudflare Worker API + Durable Object logic
+- `packages/*`: shared lint/ts/ui packages for the monorepo
+
+## Prerequisites
+
+- Node.js `>=18` (Node 20+ recommended)
+- `pnpm` 9.x
+- A Clerk application (publishable key + secret key)
+- Cloudflare account (for KV namespace + Workers runtime in local dev)
+
+## Local setup
+
+### 1. Install dependencies
+
+```bash
+pnpm install
 ```
 
-## What's inside?
+### 2. Configure frontend env
 
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `web`: a [Vite](https://vite.dev/) + [TanStack Router](https://tanstack.com/router) app
-- `@repo/ui`: a stub React component library shared by applications in this monorepo
-- `@repo/eslint-config`: shared `eslint` configurations (includes `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+```bash
+cp apps/web/.env.example apps/web/.env
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Set values in `apps/web/.env`:
 
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=web
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=web
-yarn exec turbo build --filter=web
-pnpm exec turbo build --filter=web
+```env
+VITE_API_URL=http://127.0.0.1:8787
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_xxx
 ```
 
-### Develop
+### 3. Configure backend env
 
-To develop all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
+```bash
+cp apps/backend/.env.example apps/backend/.env
 ```
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Set values in `apps/backend/.env`:
 
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+```env
+FRONTEND_URL=http://localhost:3000
+CLERK_SECRET_KEY=sk_test_xxx
 ```
 
-### Remote Caching
+### 4. Create KV namespaces and wire `wrangler.jsonc`
 
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
+The backend depends on `GROUP_INDEX_KV`. Create namespaces (once):
 
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
+```bash
+pnpm dlx wrangler@4.44.0 kv namespace create GROUP_INDEX_KV
+pnpm dlx wrangler@4.44.0 kv namespace create GROUP_INDEX_KV --preview
 ```
 
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
+Copy the returned `id` and `preview_id` into `apps/backend/wrangler.jsonc`:
 
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
+- Replace `REPLACE_WITH_KV_NAMESPACE_ID`
+- Replace `REPLACE_WITH_KV_PREVIEW_ID`
 
+### 5. Run apps locally
+
+Run both apps together:
+
+```bash
+pnpm dev
 ```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
 
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
+Or run separately:
+
+```bash
+pnpm --filter @repo/backend dev
+pnpm --filter @repo/web dev
 ```
 
-## Useful Links
+Local URLs:
 
-Learn more about the power of Turborepo:
+- Frontend: `http://localhost:3000`
+- Backend: `http://127.0.0.1:8787`
+- Health check: `http://127.0.0.1:8787/health`
 
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+## Useful scripts
+
+From repo root:
+
+```bash
+pnpm dev
+pnpm build
+pnpm lint
+pnpm check-types
+pnpm format
+```
+
+## Deployment
+
+GitHub Actions deploys:
+
+- `apps/web` to Cloudflare Pages
+- `apps/backend` to Cloudflare Workers
+
+See deployment setup guide: `docs/setup_auto_deploy.md`.
+
+## Notes on permissions and access
+
+- Only authenticated users can create groups.
+- Group managers can rename groups and manage participants.
+- Group participants (or owner) can trigger spins and access history.
+- Owner participant cannot be removed and remains a manager.
