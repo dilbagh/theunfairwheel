@@ -28,7 +28,7 @@ It lets a group spin a wheel to pick a winner, while biasing odds toward partici
 
 - `apps/web`: browser app UI
 - `apps/backend`: Cloudflare Worker API + Durable Object logic
-- `packages/*`: shared lint/ts/ui packages for the monorepo
+- `packages/*`: shared lint/ts packages for the monorepo
 
 ## Prerequisites
 
