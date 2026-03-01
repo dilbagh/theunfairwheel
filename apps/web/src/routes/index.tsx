@@ -1,5 +1,5 @@
 import { SignInButton, useAuth } from "@clerk/clerk-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FormEvent, useEffect, useState } from "react";
 import { audioEngine } from "../lib/audio";
@@ -13,6 +13,7 @@ export const Route = createFileRoute("/")({
 function Home() {
   const navigate = useNavigate();
   const groupsApi = useGroupsApi();
+  const queryClient = useQueryClient();
   const { isSignedIn } = useAuth();
   const [groupName, setGroupName] = useState("");
   const [ready, setReady] = useState(false);
@@ -36,6 +37,7 @@ function Home() {
   const createGroupMutation = useMutation({
     mutationFn: (name: string) => groupsApi.createGroup({ name }),
     onSuccess: (group) => {
+      void queryClient.invalidateQueries({ queryKey: ["my-groups"] });
       setLastGroupId(group.id);
       void navigate({
         to: "/groups/$groupId",
