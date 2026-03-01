@@ -38,19 +38,20 @@ function RootComponent() {
     () => groups.filter((group) => user && group.ownerUserId === user.id),
     [groups, user],
   );
-  const bookmarkedGroups = useMemo(
-    () => {
-      if (!user) {
-        return [];
-      }
+  const bookmarkedGroups = useMemo(() => {
+    if (!user) {
+      return [];
+    }
 
-      const bookmarkedIds = new Set(bookmarkedGroupIds);
-      return groups.filter((group) => group.ownerUserId !== user.id && bookmarkedIds.has(group.id));
-    },
-    [bookmarkedGroupIds, groups, user],
-  );
-  const isLoadingModalData = myGroupsQuery.isLoading || bookmarkedGroupIdsQuery.isLoading;
-  const hasModalDataError = myGroupsQuery.isError || bookmarkedGroupIdsQuery.isError;
+    const bookmarkedIds = new Set(bookmarkedGroupIds);
+    return groups.filter(
+      (group) => group.ownerUserId !== user.id && bookmarkedIds.has(group.id),
+    );
+  }, [bookmarkedGroupIds, groups, user]);
+  const isLoadingModalData =
+    myGroupsQuery.isLoading || bookmarkedGroupIdsQuery.isLoading;
+  const hasModalDataError =
+    myGroupsQuery.isError || bookmarkedGroupIdsQuery.isError;
 
   return (
     <div className="app-shell">
@@ -93,7 +94,7 @@ function RootComponent() {
         </main>
 
         <footer className="global-footer panel" aria-label="App footer">
-          <p className="footer-copy">Developed by AI - Designed by Dilbagh</p>
+          <p className="footer-copy">Developed by AI - Crafted by Dilbagh</p>
           <div className="footer-socials" aria-label="Social links">
             <a
               className="ghost-btn icon-btn footer-social-link"
@@ -129,64 +130,88 @@ function RootComponent() {
 
       {isGroupSelectorOpen && (
         <div className="modal-backdrop" role="presentation">
-          <div className="modal group-selector-modal" role="dialog" aria-modal="true" aria-labelledby="group-selector-heading">
+          <div
+            className="modal group-selector-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="group-selector-heading"
+          >
             <h2 id="group-selector-heading">My Groups</h2>
-            <p className="muted-text">Owned or bookmarked groups tied to your account.</p>
+            <p className="muted-text">
+              Owned or bookmarked groups tied to your account.
+            </p>
 
-            {isLoadingModalData && <p className="status-text">Loading groups...</p>}
-            {hasModalDataError && <p className="error-text">Unable to load your groups right now.</p>}
+            {isLoadingModalData && (
+              <p className="status-text">Loading groups...</p>
+            )}
+            {hasModalDataError && (
+              <p className="error-text">
+                Unable to load your groups right now.
+              </p>
+            )}
             {!isLoadingModalData &&
               !hasModalDataError &&
               ownedGroups.length === 0 &&
               bookmarkedGroups.length === 0 && (
                 <p className="muted-text">
-                  No owned or bookmarked groups yet. Create your first group from the home page.
+                  No owned or bookmarked groups yet. Create your first group
+                  from the home page.
                 </p>
               )}
 
-            {!isLoadingModalData && !hasModalDataError && ownedGroups.length > 0 && (
-              <section className="group-selector-section" aria-label="Owned groups">
-                <p className="eyebrow">Owned by You</p>
-                <ul className="group-selector-list">
-                  {ownedGroups.map((group) => (
-                    <li key={group.id}>
-                      <Link
-                        className="ghost-btn link-btn group-selector-link"
-                        to="/groups/$groupId"
-                        params={{ groupId: group.id }}
-                        onClick={() => {
-                          setIsGroupSelectorOpen(false);
-                        }}
-                      >
-                        {group.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+            {!isLoadingModalData &&
+              !hasModalDataError &&
+              ownedGroups.length > 0 && (
+                <section
+                  className="group-selector-section"
+                  aria-label="Owned groups"
+                >
+                  <p className="eyebrow">Owned by You</p>
+                  <ul className="group-selector-list">
+                    {ownedGroups.map((group) => (
+                      <li key={group.id}>
+                        <Link
+                          className="ghost-btn link-btn group-selector-link"
+                          to="/groups/$groupId"
+                          params={{ groupId: group.id }}
+                          onClick={() => {
+                            setIsGroupSelectorOpen(false);
+                          }}
+                        >
+                          {group.name}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
 
-            {!isLoadingModalData && !hasModalDataError && bookmarkedGroups.length > 0 && (
-              <section className="group-selector-section" aria-label="Bookmarked groups">
-                <p className="eyebrow">Bookmarks</p>
-                <ul className="group-selector-list">
-                  {bookmarkedGroups.map((group) => (
-                    <li key={group.id}>
-                      <Link
-                        className="ghost-btn link-btn group-selector-link"
-                        to="/groups/$groupId"
-                        params={{ groupId: group.id }}
-                        onClick={() => {
-                          setIsGroupSelectorOpen(false);
-                        }}
-                      >
-                        {group.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+            {!isLoadingModalData &&
+              !hasModalDataError &&
+              bookmarkedGroups.length > 0 && (
+                <section
+                  className="group-selector-section"
+                  aria-label="Bookmarked groups"
+                >
+                  <p className="eyebrow">Bookmarks</p>
+                  <ul className="group-selector-list">
+                    {bookmarkedGroups.map((group) => (
+                      <li key={group.id}>
+                        <Link
+                          className="ghost-btn link-btn group-selector-link"
+                          to="/groups/$groupId"
+                          params={{ groupId: group.id }}
+                          onClick={() => {
+                            setIsGroupSelectorOpen(false);
+                          }}
+                        >
+                          {group.name}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
 
             <div className="modal-actions">
               <button
