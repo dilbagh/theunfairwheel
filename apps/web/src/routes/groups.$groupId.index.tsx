@@ -1,7 +1,7 @@
 import { useAuth } from "@clerk/clerk-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { audioEngine } from "../lib/audio";
 import { connectGroupRealtime, type GroupRealtimeStatus } from "../lib/group-realtime";
 import {
@@ -35,6 +35,19 @@ type ParticipantDraft = {
   emailId: string;
   manager: boolean;
 };
+
+type ConfettiPiece = {
+  id: string;
+  left: number;
+  delayMs: number;
+  durationMs: number;
+  driftPx: number;
+  rotateDeg: number;
+  color: string;
+  sizePx: number;
+};
+
+type ConfettiStyle = CSSProperties & Record<`--${string}`, string>;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -206,6 +219,7 @@ function GroupPage() {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [renameDraftName, setRenameDraftName] = useState("");
+  const [winnerConfetti, setWinnerConfetti] = useState<ConfettiPiece[]>([]);
 
   const timeoutRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
@@ -213,6 +227,7 @@ function GroupPage() {
   const rotationRef = useRef(0);
   const currentSpinIdRef = useRef<string | null>(null);
   const currentSpinWinnerIdRef = useRef<string | null>(null);
+  const lastWinnerEffectKeyRef = useRef<string | null>(null);
   const lastVersionRef = useRef(0);
   const applyRealtimeEventRef = useRef<(event: GroupRealtimeEvent) => void>(() => {});
 
@@ -379,7 +394,6 @@ function GroupPage() {
       clearSpinTimers();
       setIsSpinning(false);
       applyWinner(currentSpinWinnerIdRef.current, currentSpinIdRef.current);
-      void audioEngine.playWin();
     }, spin.durationMs);
   };
 
@@ -496,6 +510,43 @@ function GroupPage() {
       clearShareFeedbackTimer();
     };
   }, []);
+
+  useEffect(() => {
+    if (!winner) {
+      lastWinnerEffectKeyRef.current = null;
+      setWinnerConfetti([]);
+      return;
+    }
+
+    const effectKey = `${winner.id}:${winnerSpinId ?? "no-spin-id"}`;
+    if (lastWinnerEffectKeyRef.current === effectKey) {
+      return;
+    }
+
+    lastWinnerEffectKeyRef.current = effectKey;
+    void audioEngine.playWin();
+
+    const palette = ["#f6c35b", "#39e3ff", "#ff8fab", "#6df7a1", "#ffffff"];
+    const pieces: ConfettiPiece[] = Array.from({ length: 42 }, (_value, index) => ({
+      id: `${effectKey}-${index}`,
+      left: Math.random() * 100,
+      delayMs: Math.floor(Math.random() * 220),
+      durationMs: 1400 + Math.floor(Math.random() * 850),
+      driftPx: -48 + Math.floor(Math.random() * 96),
+      rotateDeg: Math.floor(Math.random() * 720),
+      color: palette[index % palette.length] ?? "#ffffff",
+      sizePx: 6 + Math.floor(Math.random() * 8),
+    }));
+
+    setWinnerConfetti(pieces);
+    const cleanupTimer = window.setTimeout(() => {
+      setWinnerConfetti([]);
+    }, 2600);
+
+    return () => {
+      window.clearTimeout(cleanupTimer);
+    };
+  }, [winner, winnerSpinId]);
 
   useEffect(() => {
     if (groupQuery.data?.id) {
@@ -844,6 +895,14 @@ function GroupPage() {
     setRenameError(null);
     renameGroupMutation.mutate(normalized);
   };
+
+  const canSaveOrDiscardWinner = canSpin && Boolean(winnerSpinId);
+  const canRespinWinner =
+    canSpin &&
+    !isSpinning &&
+    !isSpinRequestPending &&
+    eligibleParticipants.length >= 2 &&
+    (Boolean(winnerSpinId) || !discardSpinHistoryMutation.isPending);
 
   return (
     <section className="game-layout reveal-up">
@@ -1310,90 +1369,124 @@ function GroupPage() {
 
       {winner && (
         <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="winner-heading">
+          {winnerConfetti.length > 0 && (
+            <div className="page-confetti" aria-hidden>
+              {winnerConfetti.map((piece) => (
+                <span
+                  key={piece.id}
+                  className="confetti-piece"
+                  style={
+                    {
+                      left: `${piece.left}%`,
+                      width: `${piece.sizePx}px`,
+                      height: `${Math.max(4, piece.sizePx * 0.55)}px`,
+                      backgroundColor: piece.color,
+                      animationDelay: `${piece.delayMs}ms`,
+                      animationDuration: `${piece.durationMs}ms`,
+                      "--confetti-drift": `${piece.driftPx}px`,
+                      "--confetti-rotate": `${piece.rotateDeg}deg`,
+                    } as ConfettiStyle
+                  }
+                />
+              ))}
+            </div>
+          )}
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="winner-heading"
+          >
             <p className="eyebrow winner-tag">Winner</p>
             <h2 id="winner-heading">{winner.name}</h2>
             <p className="muted-text">The wheel has chosen the next lucky champion.</p>
             <div className="modal-actions">
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={() => {
-                  setSpinError(null);
-                  if (!winnerSpinId) {
-                    setWinner(null);
-                    setWinnerSpinId(null);
-                    return;
-                  }
+              {canSaveOrDiscardWinner && (
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => {
+                    setSpinError(null);
+                    if (!winnerSpinId) {
+                      return;
+                    }
 
-                  saveSpinHistoryMutation.mutate(winnerSpinId, {
-                    onSuccess: () => {
-                      setWinner(null);
-                      setWinnerSpinId(null);
-                    },
-                  });
-                }}
-                autoFocus
-                disabled={saveSpinHistoryMutation.isPending}
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => {
-                  setSpinError(null);
-                  if (!winnerSpinId) {
-                    setWinner(null);
-                    setWinnerSpinId(null);
-                    return;
-                  }
+                    saveSpinHistoryMutation.mutate(winnerSpinId, {
+                      onSuccess: () => {
+                        setWinner(null);
+                        setWinnerSpinId(null);
+                      },
+                    });
+                  }}
+                  autoFocus
+                  disabled={saveSpinHistoryMutation.isPending}
+                >
+                  Save
+                </button>
+              )}
+              {canSaveOrDiscardWinner && (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setSpinError(null);
+                    if (!winnerSpinId) {
+                      return;
+                    }
 
-                  discardSpinHistoryMutation.mutate(winnerSpinId, {
-                    onSuccess: () => {
-                      setWinner(null);
-                      setWinnerSpinId(null);
-                    },
-                  });
-                }}
-                disabled={
-                  saveSpinHistoryMutation.isPending ||
-                  discardSpinHistoryMutation.isPending ||
-                  !winnerSpinId
-                }
-              >
-                Discard
-              </button>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => {
-                  setSpinError(null);
-                  if (!winnerSpinId) {
-                    setWinner(null);
-                    setWinnerSpinId(null);
-                    onSpin();
-                    return;
-                  }
-
-                  discardSpinHistoryMutation.mutate(winnerSpinId, {
-                    onSuccess: () => {
+                    discardSpinHistoryMutation.mutate(winnerSpinId, {
+                      onSuccess: () => {
+                        setWinner(null);
+                        setWinnerSpinId(null);
+                      },
+                    });
+                  }}
+                  disabled={saveSpinHistoryMutation.isPending || discardSpinHistoryMutation.isPending}
+                >
+                  Discard
+                </button>
+              )}
+              {canRespinWinner && (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setSpinError(null);
+                    if (!winnerSpinId) {
                       setWinner(null);
                       setWinnerSpinId(null);
                       onSpin();
-                    },
-                  });
-                }}
-                disabled={
-                  saveSpinHistoryMutation.isPending ||
-                  discardSpinHistoryMutation.isPending ||
-                  isSpinning ||
-                  isSpinRequestPending ||
-                  eligibleParticipants.length < 2
-                }
-              >
-                Respin
-              </button>
+                      return;
+                    }
+
+                    discardSpinHistoryMutation.mutate(winnerSpinId, {
+                      onSuccess: () => {
+                        setWinner(null);
+                        setWinnerSpinId(null);
+                        onSpin();
+                      },
+                    });
+                  }}
+                  autoFocus={!canSaveOrDiscardWinner}
+                  disabled={saveSpinHistoryMutation.isPending || discardSpinHistoryMutation.isPending}
+                >
+                  Respin
+                </button>
+              )}
+              {!canSaveOrDiscardWinner && !canRespinWinner && (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setSpinError(null);
+                    setWinner(null);
+                    setWinnerSpinId(null);
+                  }}
+                  autoFocus
+                >
+                  Close
+                </button>
+              )}
             </div>
             {spinError && <p className="error-text">{spinError}</p>}
           </div>

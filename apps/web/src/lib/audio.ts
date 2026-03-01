@@ -64,13 +64,20 @@ class AudioEngine {
   }
 
   async playWin() {
-    await this.tone(523.25, 0.18, "sine", 0.06);
-    setTimeout(() => {
-      void this.tone(659.25, 0.2, "sine", 0.06);
-    }, 90);
-    setTimeout(() => {
-      void this.tone(783.99, 0.24, "sine", 0.07);
-    }, 180);
+    const notes: Array<{ freq: number; durationSec: number; offsetMs: number; volume: number }> = [
+      { freq: 523.25, durationSec: 0.1, offsetMs: 0, volume: 0.05 }, // C5
+      { freq: 659.25, durationSec: 0.12, offsetMs: 90, volume: 0.055 }, // E5
+      { freq: 783.99, durationSec: 0.14, offsetMs: 180, volume: 0.06 }, // G5
+      { freq: 1046.5, durationSec: 0.2, offsetMs: 280, volume: 0.065 }, // C6
+      { freq: 1318.51, durationSec: 0.24, offsetMs: 400, volume: 0.06 }, // E6
+      { freq: 1567.98, durationSec: 0.28, offsetMs: 520, volume: 0.055 }, // G6
+    ];
+
+    for (const note of notes) {
+      setTimeout(() => {
+        void this.tone(note.freq, note.durationSec, "triangle", note.volume);
+      }, note.offsetMs);
+    }
   }
 }
 
