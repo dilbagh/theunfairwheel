@@ -6,6 +6,8 @@ import type {
   GroupRealtimeCommand,
   GroupRealtimeEvent,
   GroupRealtimeServerMessage,
+  RealtimeGroup,
+  RealtimeParticipant,
   GroupSocketSnapshot,
   GroupSpinState,
   GroupViewerAccess,
@@ -40,6 +42,13 @@ const MAX_SPIN_HISTORY_ITEMS = 20;
 const PENDING_RESULT_TTL_MS = 10 * 60 * 1000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VIEWER_HEADER = "x-group-viewer";
+const ANONYMOUS_VIEWER: GroupViewerIdentity = {
+  userId: null,
+  verifiedEmails: [],
+  primaryEmail: null,
+  firstName: null,
+  lastName: null,
+};
 
 type CloudflareWebSocket = WebSocket & { accept(): void };
 
@@ -169,17 +178,18 @@ function pickWeightedWinner(participants: Participant[]): Participant | null {
 
 function decodeViewerIdentity(encoded: string | null): GroupViewerIdentity | null {
   if (!encoded) {
-    return null;
+    return ANONYMOUS_VIEWER;
   }
 
   try {
     const parsed = JSON.parse(atob(encoded)) as GroupViewerIdentityLike;
-    if (typeof parsed.userId !== "string" || !parsed.userId) {
-      return null;
-    }
+    const userId =
+      typeof parsed.userId === "string" && parsed.userId.trim().length > 0
+        ? parsed.userId.trim()
+        : null;
 
     return {
-      userId: parsed.userId,
+      userId,
       verifiedEmails: Array.isArray(parsed.verifiedEmails)
         ? parsed.verifiedEmails.flatMap((email) =>
             typeof email === "string" && email.trim().length > 0 ? [email.trim().toLowerCase()] : [],
@@ -194,6 +204,97 @@ function decodeViewerIdentity(encoded: string | null): GroupViewerIdentity | nul
     };
   } catch {
     return null;
+  }
+}
+
+function isAnonymousViewer(viewer: GroupViewerIdentity): boolean {
+  return viewer.userId === null && viewer.verifiedEmails.length === 0;
+}
+
+function toRealtimeGroup(group: RealtimeGroup, viewer: GroupViewerIdentity): RealtimeGroup {
+  if (isAnonymousViewer(viewer)) {
+    return {
+      id: group.id,
+      name: group.name,
+      createdAt: group.createdAt,
+    };
+  }
+
+  return {
+    ...group,
+  };
+}
+
+function toRealtimeParticipant(
+  participant: RealtimeParticipant,
+  viewer: GroupViewerIdentity,
+): RealtimeParticipant {
+  if (isAnonymousViewer(viewer)) {
+    return {
+      id: participant.id,
+      name: participant.name,
+      active: participant.active,
+      spinsSinceLastWon: participant.spinsSinceLastWon,
+    };
+  }
+
+  return {
+    ...participant,
+  };
+}
+
+function toRealtimeHistoryItem(item: SpinHistoryItem, viewer: GroupViewerIdentity): SpinHistoryItem {
+  return {
+    ...item,
+    participants: item.participants.map((participant) => toRealtimeParticipant(participant, viewer)),
+  };
+}
+
+function sanitizeMessageForViewer(
+  message: GroupRealtimeServerMessage,
+  viewer: GroupViewerIdentity,
+): GroupRealtimeServerMessage {
+  if (!isAnonymousViewer(viewer)) {
+    return message;
+  }
+
+  switch (message.type) {
+    case "snapshot":
+      return {
+        ...message,
+        payload: {
+          ...message.payload,
+          group: toRealtimeGroup(message.payload.group, viewer),
+          participants: message.payload.participants.map((participant) =>
+            toRealtimeParticipant(participant, viewer),
+          ),
+          history: message.payload.history.map((item) => toRealtimeHistoryItem(item, viewer)),
+        },
+      };
+    case "history.snapshot":
+      return {
+        ...message,
+        payload: {
+          history: message.payload.history.map((item) => toRealtimeHistoryItem(item, viewer)),
+        },
+      };
+    case "group.updated":
+      return {
+        ...message,
+        payload: {
+          group: toRealtimeGroup(message.payload.group, viewer),
+        },
+      };
+    case "participant.added":
+    case "participant.updated":
+      return {
+        ...message,
+        payload: {
+          participant: toRealtimeParticipant(message.payload.participant, viewer),
+        },
+      };
+    default:
+      return message;
   }
 }
 
@@ -257,7 +358,7 @@ export class GroupDurableObject {
 
         const viewer = decodeViewerIdentity(request.headers.get(VIEWER_HEADER));
         if (!viewer) {
-          return this.error(401, "Authentication required.");
+          return this.error(400, "Invalid viewer identity.");
         }
 
         const WebSocketPairCtor = globalThis as unknown as {
@@ -445,10 +546,12 @@ export class GroupDurableObject {
 
   private snapshotEvent(current: GroupState, viewer: GroupViewerIdentity): GroupRealtimeEvent {
     const payload: GroupSocketSnapshot = {
-      group: current.group,
-      participants: current.participants,
+      group: toRealtimeGroup(current.group, viewer),
+      participants: current.participants.map((participant) => toRealtimeParticipant(participant, viewer)),
       spin: cloneSpinState(current.spin),
-      history: cloneSpinHistory(current.spinHistory).reverse(),
+      history: cloneSpinHistory(current.spinHistory)
+        .reverse()
+        .map((item) => toRealtimeHistoryItem(item, viewer)),
       viewer: this.resolveViewerAccess(current, viewer),
     };
 
@@ -1037,8 +1140,11 @@ export class GroupDurableObject {
   }
 
   private send(socket: WebSocket, message: GroupRealtimeServerMessage, clientId?: string): void {
+    const viewer = clientId ? this.sockets.get(clientId)?.viewer : null;
+    const outboundMessage = viewer ? sanitizeMessageForViewer(message, viewer) : message;
+
     try {
-      socket.send(JSON.stringify(message));
+      socket.send(JSON.stringify(outboundMessage));
     } catch {
       if (clientId) {
         this.sockets.delete(clientId);

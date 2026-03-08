@@ -7,6 +7,8 @@ import type {
   GroupSocketSnapshot,
   GroupSpinState,
   GroupViewerAccess,
+  RealtimeGroup,
+  RealtimeParticipant,
   SpinHistoryItem,
 } from "@repo/backend";
 
@@ -16,21 +18,21 @@ export type Group = {
   id: string;
   name: string;
   createdAt: string;
-  ownerUserId: string;
-  ownerEmail: string;
-  ownerParticipantId: string;
+  ownerUserId?: string;
+  ownerEmail?: string;
+  ownerParticipantId?: string;
 };
 
-export type GroupSummary = Pick<Group, "id" | "name" | "createdAt" | "ownerUserId" | "ownerEmail">;
-
-export type Participant = {
+export type GroupSummary = {
   id: string;
   name: string;
-  active: boolean;
-  emailId: string | null;
-  manager: boolean;
-  spinsSinceLastWon: number;
+  createdAt: string;
+  ownerUserId: string;
+  ownerEmail: string;
 };
+
+export type Participant = RealtimeParticipant;
+export type RealtimeGroupView = RealtimeGroup;
 
 export type GroupsApi = {
   createGroup(input: { name: string }): Promise<Group>;
@@ -46,6 +48,8 @@ export type {
   GroupSocketSnapshot,
   GroupSpinState,
   GroupViewerAccess,
+  RealtimeParticipant,
+  RealtimeGroup,
   SpinHistoryItem,
 };
 

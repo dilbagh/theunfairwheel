@@ -6,6 +6,8 @@ export type {
   GroupRealtimeCommand,
   GroupRealtimeEvent,
   GroupRealtimeServerMessage,
+  RealtimeGroup,
+  RealtimeParticipant,
   GroupSocketSnapshot,
   GroupSpinState,
   GroupViewerAccess,

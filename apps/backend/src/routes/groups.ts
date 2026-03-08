@@ -353,18 +353,11 @@ const groupsRoutes = new Hono<AppEnv>()
     return c.json(normalized);
   })
   .get("/groups/:groupId/ws", async (c) => {
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) {
-      return auth;
-    }
-    const userId = auth.userId;
-    if (!userId) {
-      return c.json({ error: "Authentication required." }, 401);
-    }
+    const auth = await getAuthContext(c);
 
     const groupId = c.req.param("groupId");
     const viewer: GroupViewerIdentity = {
-      userId,
+      userId: auth.isAuthenticated ? auth.userId : null,
       verifiedEmails: auth.verifiedEmails,
       primaryEmail: auth.primaryEmail,
       firstName: auth.firstName,

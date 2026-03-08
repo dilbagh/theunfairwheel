@@ -1,9 +1,18 @@
 import type { Group, Participant } from "./group";
 
+export type RealtimeGroup = Pick<Group, "id" | "name" | "createdAt"> &
+  Partial<Pick<Group, "ownerUserId" | "ownerEmail" | "ownerParticipantId">>;
+
+export type RealtimeParticipant = Pick<
+  Participant,
+  "id" | "name" | "active" | "spinsSinceLastWon"
+> &
+  Partial<Pick<Participant, "emailId" | "manager">>;
+
 export type SpinHistoryItem = {
   id: string;
   createdAt: string;
-  participants: Participant[];
+  participants: RealtimeParticipant[];
   winnerParticipantId: string;
 };
 
@@ -18,7 +27,7 @@ export type GroupSpinState = {
 };
 
 export type GroupViewerIdentity = {
-  userId: string;
+  userId: string | null;
   verifiedEmails: string[];
   primaryEmail: string | null;
   firstName: string | null;
@@ -33,8 +42,8 @@ export type GroupViewerAccess = {
 };
 
 export type GroupSocketSnapshot = {
-  group: Group;
-  participants: Participant[];
+  group: RealtimeGroup;
+  participants: RealtimeParticipant[];
   spin: GroupSpinState;
   history: SpinHistoryItem[];
   viewer: GroupViewerAccess;
@@ -131,14 +140,14 @@ export type HistorySnapshotEvent = EventEnvelope<
 export type ParticipantAddedEvent = EventEnvelope<
   "participant.added",
   {
-    participant: Participant;
+    participant: RealtimeParticipant;
   }
 >;
 
 export type ParticipantUpdatedEvent = EventEnvelope<
   "participant.updated",
   {
-    participant: Participant;
+    participant: RealtimeParticipant;
   }
 >;
 
@@ -174,7 +183,7 @@ export type SpinResultDismissedEvent = EventEnvelope<
 export type GroupUpdatedEvent = EventEnvelope<
   "group.updated",
   {
-    group: Group;
+    group: RealtimeGroup;
   }
 >;
 

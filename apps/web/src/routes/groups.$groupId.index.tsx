@@ -90,7 +90,7 @@ function participantToDraft(participant: Participant): ParticipantDraft {
     active: participant.active,
     spinsSinceLastWon: participant.spinsSinceLastWon,
     emailId: participant.emailId ?? "",
-    manager: participant.manager,
+    manager: participant.manager ?? false,
   };
 }
 
@@ -103,7 +103,7 @@ function GroupPageRoute() {
 function GroupPage() {
   const { groupId } = Route.useParams();
   const groupsApi = useGroupsApi();
-  const { isSignedIn, userId } = useAuth();
+  const { isSignedIn } = useAuth();
   const groupSession = useGroupSession(groupId);
   const queryClient = useQueryClient();
   const [rotation, setRotation] = useState(0);
@@ -567,7 +567,7 @@ function GroupPage() {
       const draftEmail = normalizeEmailInput(draft.emailId);
       const draftManager = draftEmail ? draft.manager : false;
 
-      if ((current.emailId ?? null) !== draftEmail || current.manager !== draftManager) {
+      if ((current.emailId ?? null) !== draftEmail || (current.manager ?? false) !== draftManager) {
         return true;
       }
     }
@@ -605,7 +605,7 @@ function GroupPage() {
 
       const emailId = normalizeEmailInput(draft.emailId);
       const manager = emailId ? draft.manager : false;
-      if ((participant.emailId ?? null) !== emailId || participant.manager !== manager) {
+      if ((participant.emailId ?? null) !== emailId || (participant.manager ?? false) !== manager) {
         updates.push({ participantId: participant.id, emailId, manager });
       }
     }
@@ -677,8 +677,8 @@ function GroupPage() {
     return <p className="status-text">Group unavailable.</p>;
   }
 
-  const isGroupOwner = Boolean(viewer?.isOwner || (userId && group.ownerUserId === userId));
-  const canBookmarkGroup = isSignedIn && Boolean(userId) && !isGroupOwner;
+  const isGroupOwner = Boolean(viewer?.isOwner);
+  const canBookmarkGroup = isSignedIn && !isGroupOwner;
   const bookmarkTitle = isGroupBookmarked ? "Remove bookmark" : "Bookmark group";
 
   const onCopyGroupLink = async () => {
@@ -1127,7 +1127,9 @@ function GroupPage() {
               {participantDrafts.length === 0 && <li className="muted-text">No participants in draft.</li>}
               {participantDrafts.map((participant) => {
                 const validEmail = normalizeEmailInput(participant.emailId);
-                const isOwnerParticipant = participant.participantId === group.ownerParticipantId;
+                const isOwnerParticipant =
+                  typeof group.ownerParticipantId === "string" &&
+                  participant.participantId === group.ownerParticipantId;
                 return (
                   <li key={participant.id} className="participant-edit-item">
                     <div className="participant-edit-name">{participant.name}</div>
