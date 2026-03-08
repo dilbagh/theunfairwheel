@@ -17,7 +17,7 @@ import { clearLastGroupId, setLastGroupId } from "../lib/storage";
 import { activeParticipants, rotationForWinner, segmentColor, weightedSegments } from "../lib/wheel";
 
 export const Route = createFileRoute("/groups/$groupId/")({
-  component: GroupPage,
+  component: GroupPageRoute,
 });
 
 type GroupData = Awaited<ReturnType<GroupsApi["getGroup"]>>;
@@ -191,6 +191,12 @@ function IconBookmarkFilled() {
       <path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3-6 3V4.5Z" fill="currentColor" />
     </svg>
   );
+}
+
+function GroupPageRoute() {
+  const { groupId } = Route.useParams();
+
+  return <GroupPage key={groupId} />;
 }
 
 function GroupPage() {

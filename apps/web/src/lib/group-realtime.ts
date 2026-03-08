@@ -32,6 +32,21 @@ export function connectGroupRealtime(input: ConnectGroupRealtimeInput): GroupRea
   let reconnectAttempt = 0;
   let isClosed = false;
 
+  const updateStatus = (status: GroupRealtimeStatus) => {
+    input.onStatusChange?.(status);
+  };
+
+  const detachSocket = (target: WebSocket | null) => {
+    if (!target) {
+      return;
+    }
+
+    target.onopen = null;
+    target.onmessage = null;
+    target.onerror = null;
+    target.onclose = null;
+  };
+
   const clearReconnectTimer = () => {
     if (reconnectTimer !== null) {
       window.clearTimeout(reconnectTimer);
@@ -45,7 +60,7 @@ export function connectGroupRealtime(input: ConnectGroupRealtimeInput): GroupRea
     }
 
     reconnectAttempt += 1;
-    input.onStatusChange?.("reconnecting");
+    updateStatus("reconnecting");
 
     const delayMs = Math.min(1000 * 2 ** Math.max(reconnectAttempt - 1, 0), 10000);
     clearReconnectTimer();
@@ -57,16 +72,26 @@ export function connectGroupRealtime(input: ConnectGroupRealtimeInput): GroupRea
       return;
     }
 
-    input.onStatusChange?.(reconnectAttempt > 0 ? "reconnecting" : "connecting");
+    updateStatus(reconnectAttempt > 0 ? "reconnecting" : "connecting");
 
-    socket = new WebSocket(wsUrlForGroup(input.groupId));
+    const nextSocket = new WebSocket(wsUrlForGroup(input.groupId));
+    socket = nextSocket;
 
-    socket.onopen = () => {
+    nextSocket.onopen = () => {
+      if (isClosed || socket !== nextSocket) {
+        nextSocket.close(1000, "Client closed");
+        return;
+      }
+
       reconnectAttempt = 0;
-      input.onStatusChange?.("open");
+      updateStatus("open");
     };
 
-    socket.onmessage = (event) => {
+    nextSocket.onmessage = (event) => {
+      if (isClosed || socket !== nextSocket) {
+        return;
+      }
+
       try {
         const parsed = JSON.parse(String(event.data)) as GroupRealtimeEvent;
         if (parsed && typeof parsed.type === "string") {
@@ -77,14 +102,21 @@ export function connectGroupRealtime(input: ConnectGroupRealtimeInput): GroupRea
       }
     };
 
-    socket.onerror = () => {
-      socket?.close();
+    nextSocket.onerror = () => {
+      if (socket !== nextSocket) {
+        return;
+      }
+
+      nextSocket.close();
     };
 
-    socket.onclose = () => {
-      socket = null;
+    nextSocket.onclose = () => {
+      if (socket === nextSocket) {
+        socket = null;
+      }
+
       if (isClosed) {
-        input.onStatusChange?.("closed");
+        updateStatus("closed");
         return;
       }
 
@@ -96,17 +128,21 @@ export function connectGroupRealtime(input: ConnectGroupRealtimeInput): GroupRea
 
   return {
     close() {
-      isClosed = true;
-      clearReconnectTimer();
-
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.close(1000, "Client closed");
-      } else {
-        socket?.close();
+      if (isClosed) {
+        return;
       }
 
+      isClosed = true;
+      clearReconnectTimer();
+      const currentSocket = socket;
       socket = null;
-      input.onStatusChange?.("closed");
+      detachSocket(currentSocket);
+
+      if (currentSocket) {
+        currentSocket.close(1000, "Client closed");
+      }
+
+      updateStatus("closed");
     },
   };
 }
