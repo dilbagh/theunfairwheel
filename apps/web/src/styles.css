@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Manrope:wght@400;500;700&family=Oxanium:wght@500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Manrope:wght@400;500;700&display=swap");
 
 :root {
   --bg-0: #050912;
@@ -205,7 +205,7 @@ input {
 .footer-copy {
   margin: 0;
   color: #b8d6e4;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.82rem;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -263,7 +263,7 @@ input {
 
 .create-group-form .field-label {
   margin-top: 0.1rem;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -381,7 +381,7 @@ input[type="checkbox"]:focus-visible {
   border-radius: 0.8rem;
   border: 1px solid transparent;
   cursor: pointer;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.035em;
@@ -708,7 +708,7 @@ input[type="checkbox"]:focus-visible {
   justify-content: center;
   gap: 0.32rem;
   padding: 0.28rem 0.5rem 0.28rem 0.36rem;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.67rem;
   font-weight: 700;
   letter-spacing: 0.035em;
@@ -759,7 +759,7 @@ input[type="checkbox"]:focus-visible {
 .participant-name {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.94rem;
   font-weight: 600;
   letter-spacing: 0.015em;
@@ -802,7 +802,7 @@ input[type="checkbox"]:focus-visible {
 }
 
 .participant-modal h2 {
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: clamp(1.45rem, 2.5vw, 1.9rem);
   font-weight: 600;
   letter-spacing: 0.045em;
@@ -812,14 +812,14 @@ input[type="checkbox"]:focus-visible {
 
 .participant-modal-eyebrow {
   margin-bottom: 0.35rem;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   letter-spacing: 0.18em;
 }
 
 .participant-modal-copy {
   margin-top: 0.45rem;
   max-width: 38rem;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.78rem;
   font-weight: 500;
   letter-spacing: 0.045em;
@@ -838,7 +838,7 @@ input[type="checkbox"]:focus-visible {
 
 .participant-modal .text-input::placeholder {
   color: #88aabd;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.82rem;
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -898,7 +898,7 @@ input[type="checkbox"]:focus-visible {
 
 .participant-edit-name {
   min-width: 0;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -910,7 +910,7 @@ input[type="checkbox"]:focus-visible {
   align-items: center;
   gap: 0.45rem;
   color: #c8e4f2;
-  font-family: "Oxanium", sans-serif;
+  font-family: "Manrope", sans-serif;
   font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.04em;
