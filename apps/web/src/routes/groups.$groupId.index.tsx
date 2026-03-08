@@ -259,6 +259,7 @@ function GroupPage() {
       rotationRef.current,
       segments,
       spin.winnerParticipantId,
+      spin.targetAngle,
       spin.extraTurns,
     );
 

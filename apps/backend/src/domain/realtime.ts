@@ -22,6 +22,7 @@ export type GroupSpinState = {
   startedAt: string | null;
   resolvedAt: string | null;
   winnerParticipantId: string | null;
+  targetAngle: number | null;
   durationMs: number | null;
   extraTurns: number | null;
 };

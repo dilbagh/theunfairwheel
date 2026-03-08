@@ -1,4 +1,9 @@
 import { randomId, type Group, type Participant, validateName } from "../domain/group";
+import {
+  participantWeight,
+  randomTargetAngleForSegment,
+  weightedSpinSegments,
+} from "../domain/spin";
 import type {
   CommitParticipantsCommand,
   GroupCommandErrorMessage,
@@ -76,6 +81,7 @@ const DEFAULT_SPIN_STATE: GroupSpinState = {
   startedAt: null,
   resolvedAt: null,
   winnerParticipantId: null,
+  targetAngle: null,
   durationMs: null,
   extraTurns: null,
 };
@@ -87,6 +93,7 @@ function cloneSpinState(state: GroupSpinState): GroupSpinState {
     startedAt: state.startedAt,
     resolvedAt: state.resolvedAt,
     winnerParticipantId: state.winnerParticipantId,
+    targetAngle: typeof state.targetAngle === "number" ? state.targetAngle : null,
     durationMs: state.durationMs,
     extraTurns: state.extraTurns,
   };
@@ -149,10 +156,6 @@ function cloneSpinHistoryItem(item: SpinHistoryItemLike): SpinHistoryItem {
 
 function cloneSpinHistory(items: SpinHistoryItemLike[]): SpinHistoryItem[] {
   return items.map((item) => cloneSpinHistoryItem(item));
-}
-
-function participantWeight(participant: Participant): number {
-  return Math.max(1, participant.spinsSinceLastWon + 1);
 }
 
 function pickWeightedWinner(participants: Participant[]): Participant | null {
@@ -671,11 +674,18 @@ export class GroupDurableObject {
     if (!winner) {
       throw new Error("Unable to resolve winner.");
     }
+    const winnerSegment = weightedSpinSegments(eligibleParticipants).find(
+      (segment) => segment.participantId === winner.id,
+    );
+    if (!winnerSegment) {
+      throw new Error("Unable to resolve winning segment.");
+    }
 
     const spinId = randomId();
     const durationMs = 4000 + Math.floor(Math.random() * 2000);
     const extraTurns = 6 + Math.floor(Math.random() * 3);
     const startedAt = new Date().toISOString();
+    const targetAngle = randomTargetAngleForSegment(winnerSegment, Math.random());
 
     current.spin = {
       status: "spinning",
@@ -683,6 +693,7 @@ export class GroupDurableObject {
       startedAt,
       resolvedAt: null,
       winnerParticipantId: winner.id,
+      targetAngle,
       durationMs,
       extraTurns,
     };

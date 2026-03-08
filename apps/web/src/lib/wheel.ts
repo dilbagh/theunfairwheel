@@ -55,6 +55,7 @@ export function rotationForWinner(
   currentRotation: number,
   segments: WheelSegment[],
   winnerParticipantId: string,
+  targetAngle: number | null,
   extraTurns: number,
 ): number {
   if (segments.length <= 0) {
@@ -66,8 +67,14 @@ export function rotationForWinner(
     return currentRotation;
   }
 
+  const resolvedTargetAngle =
+    typeof targetAngle === "number" &&
+    targetAngle >= winnerSegment.startAngle &&
+    targetAngle <= winnerSegment.endAngle
+      ? targetAngle
+      : winnerSegment.midAngle;
   const targetWithinCircle =
-    ((POINTER_ANGLE - winnerSegment.midAngle) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
+    ((POINTER_ANGLE - resolvedTargetAngle) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
   const currentMod = ((currentRotation % FULL_CIRCLE) + FULL_CIRCLE) % FULL_CIRCLE;
   const offset = ((targetWithinCircle - currentMod) % FULL_CIRCLE + FULL_CIRCLE) % FULL_CIRCLE;
 

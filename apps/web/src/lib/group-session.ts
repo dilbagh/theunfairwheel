@@ -224,6 +224,7 @@ const EMPTY_SPIN: GroupSpinState = {
   startedAt: null,
   resolvedAt: null,
   winnerParticipantId: null,
+  targetAngle: null,
   durationMs: null,
   extraTurns: null,
 };
