@@ -1,12 +1,15 @@
-import {
-  randomId,
-  type Group,
-  type Participant,
-  validateName,
-} from "../domain/group";
+import { randomId, type Group, type Participant, validateName } from "../domain/group";
 import type {
+  CommitParticipantsCommand,
+  GroupCommandErrorMessage,
+  GroupCommandOkMessage,
+  GroupRealtimeCommand,
   GroupRealtimeEvent,
+  GroupRealtimeServerMessage,
+  GroupSocketSnapshot,
   GroupSpinState,
+  GroupViewerAccess,
+  GroupViewerIdentity,
   SpinHistoryItem,
 } from "../domain/realtime";
 import type { Bindings, DurableObjectStateLike } from "../types";
@@ -26,10 +29,18 @@ type ErrorBody = {
   error: string;
 };
 
+type GroupSocketClient = {
+  clientId: string;
+  socket: WebSocket;
+  viewer: GroupViewerIdentity;
+};
+
 const GROUP_STATE_KEY = "group-state";
 const MAX_SPIN_HISTORY_ITEMS = 20;
 const PENDING_RESULT_TTL_MS = 10 * 60 * 1000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const VIEWER_HEADER = "x-group-viewer";
+
 type CloudflareWebSocket = WebSocket & { accept(): void };
 
 type ParticipantLike = Omit<Participant, "emailId" | "manager" | "spinsSinceLastWon"> & {
@@ -40,6 +51,14 @@ type ParticipantLike = Omit<Participant, "emailId" | "manager" | "spinsSinceLast
 
 type SpinHistoryItemLike = Omit<SpinHistoryItem, "participants"> & {
   participants?: ParticipantLike[];
+};
+
+type GroupViewerIdentityLike = {
+  userId?: unknown;
+  verifiedEmails?: unknown;
+  primaryEmail?: unknown;
+  firstName?: unknown;
+  lastName?: unknown;
 };
 
 const DEFAULT_SPIN_STATE: GroupSpinState = {
@@ -148,26 +167,38 @@ function pickWeightedWinner(participants: Participant[]): Participant | null {
   return participants[participants.length - 1] ?? null;
 }
 
-type AddParticipantBody = {
-  name?: string;
-  emailId?: string | null;
-  manager?: boolean;
-};
+function decodeViewerIdentity(encoded: string | null): GroupViewerIdentity | null {
+  if (!encoded) {
+    return null;
+  }
 
-type UpdateParticipantBody = {
-  active?: boolean;
-  emailId?: string | null;
-  manager?: boolean;
-};
+  try {
+    const parsed = JSON.parse(atob(encoded)) as GroupViewerIdentityLike;
+    if (typeof parsed.userId !== "string" || !parsed.userId) {
+      return null;
+    }
 
-type CommitParticipantsBody = {
-  adds?: Array<{ name?: string; emailId?: string | null; manager?: boolean }>;
-  updates?: Array<{ participantId?: string; emailId?: string | null; manager?: boolean }>;
-  removes?: string[];
-};
+    return {
+      userId: parsed.userId,
+      verifiedEmails: Array.isArray(parsed.verifiedEmails)
+        ? parsed.verifiedEmails.flatMap((email) =>
+            typeof email === "string" && email.trim().length > 0 ? [email.trim().toLowerCase()] : [],
+          )
+        : [],
+      primaryEmail:
+        typeof parsed.primaryEmail === "string" && parsed.primaryEmail.trim().length > 0
+          ? parsed.primaryEmail.trim().toLowerCase()
+          : null,
+      firstName: typeof parsed.firstName === "string" && parsed.firstName.trim() ? parsed.firstName.trim() : null,
+      lastName: typeof parsed.lastName === "string" && parsed.lastName.trim() ? parsed.lastName.trim() : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export class GroupDurableObject {
-  private readonly sockets = new Map<string, WebSocket>();
+  private readonly sockets = new Map<string, GroupSocketClient>();
 
   constructor(
     private readonly state: DurableObjectStateLike,
@@ -224,6 +255,11 @@ export class GroupDurableObject {
           return this.error(404, "Group not found.");
         }
 
+        const viewer = decodeViewerIdentity(request.headers.get(VIEWER_HEADER));
+        if (!viewer) {
+          return this.error(401, "Authentication required.");
+        }
+
         const WebSocketPairCtor = globalThis as unknown as {
           WebSocketPair: new () => { 0: WebSocket; 1: WebSocket };
         };
@@ -231,595 +267,12 @@ export class GroupDurableObject {
         const client = pair[0];
         const server = pair[1];
 
-        this.acceptSocket(server, current);
+        this.acceptSocket(server, viewer, current);
 
         return new Response(null, {
           status: 101,
           webSocket: client,
         } as ResponseInit & { webSocket: WebSocket });
-      }
-
-      if (request.method === "GET" && url.pathname === "/group") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        return Response.json(current.group);
-      }
-
-      if (request.method === "PATCH" && url.pathname === "/group") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const body = (await request.json()) as { name?: string };
-        const nextName = validateName(body.name ?? "");
-
-        if (current.group.name === nextName) {
-          return Response.json(current.group);
-        }
-
-        current.group = {
-          ...current.group,
-          name: nextName,
-        };
-
-        const next = await this.bumpAndSave(current);
-        this.broadcast({
-          type: "group.updated",
-          groupId: next.group.id,
-          version: next.version,
-          ts: new Date().toISOString(),
-          payload: {
-            group: next.group,
-          },
-        });
-
-        return Response.json(next.group);
-      }
-
-      if (request.method === "GET" && url.pathname === "/participants") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        return Response.json(current.participants);
-      }
-
-      if (request.method === "POST" && url.pathname === "/participants") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const body = (await request.json()) as AddParticipantBody;
-        const name = validateName(body.name ?? "");
-        const emailId = normalizeEmailId(body.emailId);
-        const manager = body.manager === true;
-        if (typeof body.manager !== "undefined" && typeof body.manager !== "boolean") {
-          return this.error(400, "manager must be a boolean.");
-        }
-        if (manager && !emailId) {
-          return this.error(400, "manager requires a valid emailId.");
-        }
-
-        if (
-          current.participants.some(
-            (participant) => participant.name.toLowerCase() === name.toLowerCase(),
-          )
-        ) {
-          return this.error(409, "Participant with this name already exists.");
-        }
-
-        const participant: Participant = {
-          id: randomId(),
-          name,
-          active: true,
-          emailId,
-          manager,
-          spinsSinceLastWon: 0,
-        };
-
-        current.participants.push(participant);
-
-        const next = await this.bumpAndSave(current);
-        this.broadcast({
-          type: "participant.added",
-          groupId: next.group.id,
-          version: next.version,
-          ts: new Date().toISOString(),
-          payload: {
-            participant,
-          },
-        });
-
-        return Response.json(participant, { status: 201 });
-      }
-
-      if (request.method === "POST" && url.pathname === "/spin") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        if (current.spin.status === "spinning") {
-          return this.error(409, "A spin is already in progress.");
-        }
-
-        const eligibleParticipants = current.participants.filter((participant) => participant.active);
-        if (eligibleParticipants.length < 2) {
-          return this.error(409, "Need at least 2 active participants to spin.");
-        }
-
-        const winner = pickWeightedWinner(eligibleParticipants);
-        if (!winner) {
-          return this.error(500, "Unable to resolve winner.");
-        }
-
-        const spinId = randomId();
-        const durationMs = 4000 + Math.floor(Math.random() * 2000);
-        const extraTurns = 6 + Math.floor(Math.random() * 3);
-        const startedAt = new Date().toISOString();
-
-        current.spin = {
-          status: "spinning",
-          spinId,
-          startedAt,
-          resolvedAt: null,
-          winnerParticipantId: winner.id,
-          durationMs,
-          extraTurns,
-        };
-
-        const startedState = await this.bumpAndSave(current);
-
-        this.broadcast({
-          type: "spin.started",
-          groupId: startedState.group.id,
-          version: startedState.version,
-          ts: new Date().toISOString(),
-          payload: {
-            spin: cloneSpinState(startedState.spin),
-          },
-        });
-
-        setTimeout(() => {
-          void this.resolveSpin(spinId);
-        }, durationMs);
-
-        return Response.json({ spin: startedState.spin }, { status: 202 });
-      }
-
-      if (request.method === "GET" && url.pathname === "/history") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        return Response.json(cloneSpinHistory(current.spinHistory).reverse());
-      }
-
-      const historyPathMatch = url.pathname.match(/^\/history\/([^/]+)$/);
-      const historySavePathMatch = url.pathname.match(/^\/history\/([^/]+)\/save$/);
-      if (historySavePathMatch && request.method === "POST") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const spinId = historySavePathMatch[1];
-        if (!spinId) {
-          return this.error(400, "Spin id is required.");
-        }
-
-        if (current.pendingResultSpinId === spinId) {
-          current.pendingResultSpinId = null;
-          current.pendingResultCounters = null;
-          current.pendingResultExpiresAt = null;
-          const next = await this.bumpAndSave(current);
-          this.broadcast({
-            type: "spin.result.dismissed",
-            groupId: next.group.id,
-            version: next.version,
-            ts: new Date().toISOString(),
-            payload: {
-              spinId,
-              action: "save",
-            },
-          });
-        }
-
-        return new Response(null, { status: 204 });
-      }
-
-      if (historyPathMatch && request.method === "DELETE") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const spinId = historyPathMatch[1];
-        if (!spinId) {
-          return this.error(400, "Spin id is required.");
-        }
-
-        const nowTs = Date.now();
-        const pendingExpiryTs = current.pendingResultExpiresAt
-          ? Date.parse(current.pendingResultExpiresAt)
-          : Number.NaN;
-        const isPendingExpired =
-          Number.isFinite(pendingExpiryTs) && pendingExpiryTs > 0 && pendingExpiryTs < nowTs;
-        const hadPendingResult =
-          current.pendingResultSpinId === spinId &&
-          !isPendingExpired &&
-          current.pendingResultCounters !== null;
-
-        const revertedParticipants: Participant[] = [];
-        if (hadPendingResult && current.pendingResultCounters) {
-          for (const participant of current.participants) {
-            const previousCounter = current.pendingResultCounters[participant.id];
-            if (typeof previousCounter === "number" && Number.isFinite(previousCounter)) {
-              participant.spinsSinceLastWon = Math.max(0, Math.floor(previousCounter));
-              revertedParticipants.push({ ...participant });
-            }
-          }
-        }
-
-        current.spinHistory = current.spinHistory.filter((item) => item.id !== spinId);
-        if (current.pendingResultSpinId === spinId || isPendingExpired) {
-          current.pendingResultSpinId = null;
-          current.pendingResultCounters = null;
-          current.pendingResultExpiresAt = null;
-        }
-        const next = await this.bumpAndSave(current);
-
-        if (hadPendingResult) {
-          for (const participant of revertedParticipants) {
-            this.broadcast({
-              type: "participant.updated",
-              groupId: next.group.id,
-              version: next.version,
-              ts: new Date().toISOString(),
-              payload: {
-                participant,
-              },
-            });
-          }
-
-          this.broadcast({
-            type: "spin.result.dismissed",
-            groupId: next.group.id,
-            version: next.version,
-            ts: new Date().toISOString(),
-            payload: {
-              spinId,
-              action: "discard",
-            },
-          });
-        }
-
-        return new Response(null, { status: 204 });
-      }
-
-      if (request.method === "POST" && url.pathname === "/participants/commit") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const body = (await request.json()) as CommitParticipantsBody;
-        if (typeof body !== "object" || body === null) {
-          return this.error(400, "Invalid request body.");
-        }
-
-        const adds = body.adds ?? [];
-        const updates = body.updates ?? [];
-        const removes = body.removes ?? [];
-
-        if (!Array.isArray(adds) || !Array.isArray(updates) || !Array.isArray(removes)) {
-          return this.error(400, "adds, updates, and removes must be arrays.");
-        }
-
-        const currentById = new Map(current.participants.map((participant) => [participant.id, participant]));
-
-        const removeSet = new Set<string>();
-        for (const participantId of removes) {
-          if (typeof participantId !== "string" || !participantId) {
-            return this.error(400, "Each remove id must be a non-empty string.");
-          }
-          if (!currentById.has(participantId)) {
-            return this.error(404, `Participant not found: ${participantId}`);
-          }
-          if (removeSet.has(participantId)) {
-            return this.error(400, `Duplicate remove participant id: ${participantId}`);
-          }
-          if (participantId === current.group.ownerParticipantId) {
-            return this.error(400, "Owner participant cannot be removed.");
-          }
-          removeSet.add(participantId);
-        }
-
-        const updateMap = new Map<string, { emailId: string | null; manager: boolean }>();
-        for (const update of updates) {
-          if (typeof update !== "object" || update === null) {
-            return this.error(400, "Each update entry must be an object.");
-          }
-
-          const participantId = update.participantId;
-          if (typeof participantId !== "string" || !participantId) {
-            return this.error(400, "Each update participantId must be a non-empty string.");
-          }
-          if (!currentById.has(participantId)) {
-            return this.error(404, `Participant not found: ${participantId}`);
-          }
-          if (removeSet.has(participantId)) {
-            return this.error(400, `Participant cannot be both updated and removed: ${participantId}`);
-          }
-          if (updateMap.has(participantId)) {
-            return this.error(400, `Duplicate update participant id: ${participantId}`);
-          }
-
-          const currentParticipant = currentById.get(participantId);
-          if (!currentParticipant) {
-            return this.error(404, `Participant not found: ${participantId}`);
-          }
-          if (participantId === current.group.ownerParticipantId) {
-            if (typeof update.emailId !== "undefined") {
-              const nextOwnerEmail = normalizeEmailId(update.emailId);
-              if (nextOwnerEmail !== currentParticipant.emailId) {
-                return this.error(400, "Owner participant email cannot be changed.");
-              }
-            }
-            if (typeof update.manager !== "undefined" && update.manager !== true) {
-              return this.error(400, "Owner participant must remain a manager.");
-            }
-          }
-
-          let emailId = currentParticipant.emailId;
-          if (typeof update.emailId !== "undefined") {
-            emailId = normalizeEmailId(update.emailId);
-          }
-
-          let manager = currentParticipant.manager;
-          if (typeof update.manager !== "undefined") {
-            if (typeof update.manager !== "boolean") {
-              return this.error(400, "manager must be a boolean.");
-            }
-            manager = update.manager;
-          }
-
-          if (manager && !emailId) {
-            return this.error(400, "manager requires a valid emailId.");
-          }
-          if (!emailId) {
-            manager = false;
-          }
-
-          updateMap.set(participantId, { emailId, manager });
-        }
-
-        const existingNames = new Set(
-          current.participants
-            .filter((participant) => !removeSet.has(participant.id))
-            .map((participant) => participant.name.toLowerCase()),
-        );
-        const addedParticipants: Participant[] = [];
-        for (const add of adds) {
-          if (typeof add !== "object" || add === null) {
-            return this.error(400, "Each add entry must be an object.");
-          }
-
-          const name = validateName(add.name ?? "");
-          const normalizedName = name.toLowerCase();
-          if (existingNames.has(normalizedName)) {
-            return this.error(409, "Participant with this name already exists.");
-          }
-          existingNames.add(normalizedName);
-
-          if (typeof add.manager !== "undefined" && typeof add.manager !== "boolean") {
-            return this.error(400, "manager must be a boolean.");
-          }
-
-          const emailId = normalizeEmailId(add.emailId);
-          const manager = add.manager === true;
-          if (manager && !emailId) {
-            return this.error(400, "manager requires a valid emailId.");
-          }
-
-          addedParticipants.push({
-            id: randomId(),
-            name,
-            active: true,
-            emailId,
-            manager,
-            spinsSinceLastWon: 0,
-          });
-        }
-
-        current.participants = current.participants
-          .filter((participant) => !removeSet.has(participant.id))
-          .map((participant) => {
-            const updated = updateMap.get(participant.id);
-            if (!updated) {
-              return participant;
-            }
-            if (participant.id === current.group.ownerParticipantId) {
-              return {
-                ...participant,
-                active: true,
-                emailId: participant.emailId,
-                manager: true,
-              };
-            }
-            return {
-              ...participant,
-              emailId: updated.emailId,
-              manager: updated.manager,
-            };
-          });
-
-        current.participants.push(...addedParticipants);
-
-        const next = await this.bumpAndSave(current);
-        const ts = new Date().toISOString();
-
-        for (const participantId of removeSet) {
-          this.broadcast({
-            type: "participant.removed",
-            groupId: next.group.id,
-            version: next.version,
-            ts,
-            payload: {
-              participantId,
-            },
-          });
-        }
-
-        for (const [participantId] of updateMap) {
-          const participant = next.participants.find((item) => item.id === participantId);
-          if (!participant) {
-            continue;
-          }
-
-          this.broadcast({
-            type: "participant.updated",
-            groupId: next.group.id,
-            version: next.version,
-            ts,
-            payload: {
-              participant,
-            },
-          });
-        }
-
-        for (const participant of addedParticipants) {
-          this.broadcast({
-            type: "participant.added",
-            groupId: next.group.id,
-            version: next.version,
-            ts,
-            payload: {
-              participant,
-            },
-          });
-        }
-
-        return Response.json(next.participants);
-      }
-
-      const participantsPathMatch = url.pathname.match(/^\/participants\/([^/]+)$/);
-      if (participantsPathMatch && request.method === "PATCH") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const participantId = participantsPathMatch[1];
-        if (!participantId) {
-          return this.error(400, "Participant id is required.");
-        }
-        const body = (await request.json()) as UpdateParticipantBody;
-        if (
-          typeof body.active === "undefined" &&
-          typeof body.emailId === "undefined" &&
-          typeof body.manager === "undefined"
-        ) {
-          return this.error(400, "At least one of active, emailId, or manager must be provided.");
-        }
-
-        const participant = current.participants.find((item) => item.id === participantId);
-        if (!participant) {
-          return this.error(404, "Participant not found.");
-        }
-
-        if (typeof body.active !== "undefined") {
-          if (typeof body.active !== "boolean") {
-            return this.error(400, "active must be a boolean.");
-          }
-          participant.active = body.active;
-        }
-
-        if (typeof body.emailId !== "undefined") {
-          if (participant.id === current.group.ownerParticipantId) {
-            const nextOwnerEmail = normalizeEmailId(body.emailId);
-            if (nextOwnerEmail !== participant.emailId) {
-              return this.error(400, "Owner participant email cannot be changed.");
-            }
-          }
-          participant.emailId = normalizeEmailId(body.emailId);
-        }
-
-        if (typeof body.manager !== "undefined") {
-          if (typeof body.manager !== "boolean") {
-            return this.error(400, "manager must be a boolean.");
-          }
-          if (participant.id === current.group.ownerParticipantId && body.manager !== true) {
-            return this.error(400, "Owner participant must remain a manager.");
-          }
-          participant.manager = body.manager;
-        }
-
-        if (participant.manager && !participant.emailId) {
-          return this.error(400, "manager requires a valid emailId.");
-        }
-        if (!participant.emailId) {
-          participant.manager = false;
-        }
-        if (participant.id === current.group.ownerParticipantId) {
-          participant.manager = true;
-        }
-
-        const next = await this.bumpAndSave(current);
-        this.broadcast({
-          type: "participant.updated",
-          groupId: next.group.id,
-          version: next.version,
-          ts: new Date().toISOString(),
-          payload: {
-            participant,
-          },
-        });
-
-        return Response.json(participant);
-      }
-
-      if (participantsPathMatch && request.method === "DELETE") {
-        const current = await this.loadState();
-        if (!current) {
-          return this.error(404, "Group not found.");
-        }
-
-        const participantId = participantsPathMatch[1];
-        if (!participantId) {
-          return this.error(400, "Participant id is required.");
-        }
-        if (participantId === current.group.ownerParticipantId) {
-          return this.error(400, "Owner participant cannot be removed.");
-        }
-        const previousCount = current.participants.length;
-        current.participants = current.participants.filter(
-          (participant) => participant.id !== participantId,
-        );
-
-        if (current.participants.length === previousCount) {
-          return this.error(404, "Participant not found.");
-        }
-
-        const next = await this.bumpAndSave(current);
-        this.broadcast({
-          type: "participant.removed",
-          groupId: next.group.id,
-          version: next.version,
-          ts: new Date().toISOString(),
-          payload: {
-            participantId,
-          },
-        });
-
-        return new Response(null, { status: 204 });
       }
 
       return this.error(404, "Not found.");
@@ -832,26 +285,19 @@ export class GroupDurableObject {
     }
   }
 
-  private acceptSocket(socket: WebSocket, current: GroupState): void {
+  private acceptSocket(socket: WebSocket, viewer: GroupViewerIdentity, current: GroupState): void {
     const acceptedSocket = socket as CloudflareWebSocket;
     acceptedSocket.accept();
 
     const clientId = randomId();
-    this.sockets.set(clientId, socket);
-
-    const snapshotEvent: GroupRealtimeEvent = {
-      type: "snapshot",
-      groupId: current.group.id,
-      version: current.version,
-      ts: new Date().toISOString(),
-      payload: {
-        group: current.group,
-        participants: current.participants,
-        spin: cloneSpinState(current.spin),
-      },
+    const client: GroupSocketClient = {
+      clientId,
+      socket,
+      viewer,
     };
+    this.sockets.set(clientId, client);
 
-    this.send(acceptedSocket, snapshotEvent, clientId);
+    this.send(acceptedSocket, this.snapshotEvent(current, viewer), clientId);
 
     acceptedSocket.addEventListener("close", () => {
       this.sockets.delete(clientId);
@@ -866,9 +312,649 @@ export class GroupDurableObject {
       }
     });
 
-    acceptedSocket.addEventListener("message", () => {
-      // Currently server-push only.
+    acceptedSocket.addEventListener("message", (event) => {
+      void this.handleSocketMessage(client, event.data);
     });
+  }
+
+  private async handleSocketMessage(client: GroupSocketClient, data: unknown): Promise<void> {
+    let command: GroupRealtimeCommand;
+
+    try {
+      command = JSON.parse(String(data)) as GroupRealtimeCommand;
+    } catch {
+      this.send(
+        client.socket,
+        this.commandError("unknown", "load.history", 400, "Malformed socket payload."),
+        client.clientId,
+      );
+      return;
+    }
+
+    if (
+      !command ||
+      typeof command !== "object" ||
+      typeof command.type !== "string" ||
+      typeof command.requestId !== "string" ||
+      !command.requestId
+    ) {
+      this.send(
+        client.socket,
+        this.commandError("unknown", "load.history", 400, "Malformed socket command."),
+        client.clientId,
+      );
+      return;
+    }
+
+    const current = await this.loadState();
+    if (!current) {
+      this.send(
+        client.socket,
+        this.commandError(command.requestId, command.type, 404, "Group not found."),
+        client.clientId,
+      );
+      return;
+    }
+
+    const access = this.resolveViewerAccess(current, client.viewer);
+
+    try {
+      switch (command.type) {
+        case "load.history":
+          this.requireParticipantAccess(access);
+          this.send(client.socket, this.historySnapshotEvent(current), client.clientId);
+          this.send(client.socket, this.commandOk(current, command.requestId, command.type), client.clientId);
+          return;
+        case "group.rename":
+          this.requireManagerAccess(access);
+          await this.handleRenameGroup(client, current, command);
+          return;
+        case "spin.start":
+          this.requireParticipantAccess(access);
+          await this.handleStartSpin(client, current, command);
+          return;
+        case "history.save":
+          this.requireParticipantAccess(access);
+          await this.handleSaveHistory(client, current, command);
+          return;
+        case "history.discard":
+          this.requireParticipantAccess(access);
+          await this.handleDiscardHistory(client, current, command);
+          return;
+        case "participant.setActive":
+          this.requireParticipantAccess(access);
+          if (access.participantId !== command.payload.participantId && !access.isManager) {
+            throw new Error("Manager access is required.");
+          }
+          await this.handleSetParticipantActive(client, current, command);
+          return;
+        case "participants.commit":
+          this.requireManagerAccess(access);
+          await this.handleCommitParticipants(client, current, command);
+          return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Request failed.";
+      const status =
+        message === "Authentication required."
+          ? 401
+          : message === "You do not have access to this group."
+            ? 403
+            : message === "Manager access is required."
+              ? 403
+              : 400;
+
+      this.send(
+        client.socket,
+        this.commandError(command.requestId, command.type, status, message),
+        client.clientId,
+      );
+    }
+  }
+
+  private requireParticipantAccess(access: GroupViewerAccess): void {
+    if (!access.isParticipant && !access.isOwner) {
+      throw new Error("You do not have access to this group.");
+    }
+  }
+
+  private requireManagerAccess(access: GroupViewerAccess): void {
+    if (!access.isManager) {
+      throw new Error("Manager access is required.");
+    }
+  }
+
+  private resolveViewerAccess(current: GroupState, viewer: GroupViewerIdentity): GroupViewerAccess {
+    const participant = current.participants.find((candidate) => {
+      if (!candidate.emailId) {
+        return false;
+      }
+
+      return viewer.verifiedEmails.includes(candidate.emailId.trim().toLowerCase());
+    });
+
+    const isOwner = viewer.userId === current.group.ownerUserId;
+
+    return {
+      isOwner,
+      isParticipant: Boolean(participant),
+      isManager: isOwner || Boolean(participant?.manager),
+      participantId: participant?.id ?? null,
+    };
+  }
+
+  private snapshotEvent(current: GroupState, viewer: GroupViewerIdentity): GroupRealtimeEvent {
+    const payload: GroupSocketSnapshot = {
+      group: current.group,
+      participants: current.participants,
+      spin: cloneSpinState(current.spin),
+      history: cloneSpinHistory(current.spinHistory).reverse(),
+      viewer: this.resolveViewerAccess(current, viewer),
+    };
+
+    return {
+      type: "snapshot",
+      groupId: current.group.id,
+      version: current.version,
+      ts: new Date().toISOString(),
+      payload,
+    };
+  }
+
+  private historySnapshotEvent(current: GroupState): GroupRealtimeEvent {
+    return {
+      type: "history.snapshot",
+      groupId: current.group.id,
+      version: current.version,
+      ts: new Date().toISOString(),
+      payload: {
+        history: cloneSpinHistory(current.spinHistory).reverse(),
+      },
+    };
+  }
+
+  private commandOk(
+    current: GroupState,
+    requestId: string,
+    commandType: GroupRealtimeCommand["type"],
+    sync?: GroupCommandOkMessage["payload"]["sync"],
+  ): GroupCommandOkMessage {
+    return {
+      type: "command.ok",
+      groupId: current.group.id,
+      version: current.version,
+      ts: new Date().toISOString(),
+      payload: {
+        requestId,
+        commandType,
+        sync,
+      },
+    };
+  }
+
+  private commandError(
+    requestId: string,
+    commandType: GroupRealtimeCommand["type"],
+    status: number,
+    error: string,
+  ): GroupCommandErrorMessage {
+    return {
+      type: "command.error",
+      groupId: "",
+      version: 0,
+      ts: new Date().toISOString(),
+      payload: {
+        requestId,
+        commandType,
+        error,
+        status,
+      },
+    };
+  }
+
+  private async handleRenameGroup(
+    client: GroupSocketClient,
+    current: GroupState,
+    command: Extract<GroupRealtimeCommand, { type: "group.rename" }>,
+  ): Promise<void> {
+    const nextName = validateName(command.payload.name);
+
+    if (current.group.name !== nextName) {
+      current.group = {
+        ...current.group,
+        name: nextName,
+      };
+
+      const next = await this.bumpAndSave(current);
+      this.broadcast({
+        type: "group.updated",
+        groupId: next.group.id,
+        version: next.version,
+        ts: new Date().toISOString(),
+        payload: {
+          group: next.group,
+        },
+      });
+      this.send(
+        client.socket,
+        this.commandOk(next, command.requestId, command.type, { group: next.group }),
+        client.clientId,
+      );
+      return;
+    }
+
+    this.send(
+      client.socket,
+      this.commandOk(current, command.requestId, command.type, { group: current.group }),
+      client.clientId,
+    );
+  }
+
+  private async handleStartSpin(
+    client: GroupSocketClient,
+    current: GroupState,
+    command: Extract<GroupRealtimeCommand, { type: "spin.start" }>,
+  ): Promise<void> {
+    if (current.spin.status === "spinning") {
+      throw new Error("A spin is already in progress.");
+    }
+
+    const eligibleParticipants = current.participants.filter((participant) => participant.active);
+    if (eligibleParticipants.length < 2) {
+      throw new Error("Need at least 2 active participants to spin.");
+    }
+
+    const winner = pickWeightedWinner(eligibleParticipants);
+    if (!winner) {
+      throw new Error("Unable to resolve winner.");
+    }
+
+    const spinId = randomId();
+    const durationMs = 4000 + Math.floor(Math.random() * 2000);
+    const extraTurns = 6 + Math.floor(Math.random() * 3);
+    const startedAt = new Date().toISOString();
+
+    current.spin = {
+      status: "spinning",
+      spinId,
+      startedAt,
+      resolvedAt: null,
+      winnerParticipantId: winner.id,
+      durationMs,
+      extraTurns,
+    };
+
+    const startedState = await this.bumpAndSave(current);
+
+    this.broadcast({
+      type: "spin.started",
+      groupId: startedState.group.id,
+      version: startedState.version,
+      ts: new Date().toISOString(),
+      payload: {
+        spin: cloneSpinState(startedState.spin),
+      },
+    });
+
+    this.send(
+      client.socket,
+      this.commandOk(startedState, command.requestId, command.type),
+      client.clientId,
+    );
+
+    setTimeout(() => {
+      void this.resolveSpin(spinId);
+    }, durationMs);
+  }
+
+  private async handleSaveHistory(
+    client: GroupSocketClient,
+    current: GroupState,
+    command: Extract<GroupRealtimeCommand, { type: "history.save" }>,
+  ): Promise<void> {
+    const spinId = command.payload.spinId;
+    if (!spinId) {
+      throw new Error("Spin id is required.");
+    }
+
+    if (current.pendingResultSpinId === spinId) {
+      current.pendingResultSpinId = null;
+      current.pendingResultCounters = null;
+      current.pendingResultExpiresAt = null;
+      current = await this.bumpAndSave(current);
+      this.broadcast({
+        type: "spin.result.dismissed",
+        groupId: current.group.id,
+        version: current.version,
+        ts: new Date().toISOString(),
+        payload: {
+          spinId,
+          action: "save",
+        },
+      });
+      this.broadcast(this.historySnapshotEvent(current));
+    }
+
+    this.send(client.socket, this.commandOk(current, command.requestId, command.type), client.clientId);
+  }
+
+  private async handleDiscardHistory(
+    client: GroupSocketClient,
+    current: GroupState,
+    command: Extract<GroupRealtimeCommand, { type: "history.discard" }>,
+  ): Promise<void> {
+    const spinId = command.payload.spinId;
+    if (!spinId) {
+      throw new Error("Spin id is required.");
+    }
+
+    const nowTs = Date.now();
+    const pendingExpiryTs = current.pendingResultExpiresAt
+      ? Date.parse(current.pendingResultExpiresAt)
+      : Number.NaN;
+    const isPendingExpired =
+      Number.isFinite(pendingExpiryTs) && pendingExpiryTs > 0 && pendingExpiryTs < nowTs;
+    const hadPendingResult =
+      current.pendingResultSpinId === spinId &&
+      !isPendingExpired &&
+      current.pendingResultCounters !== null;
+
+    const revertedParticipants: Participant[] = [];
+    if (hadPendingResult && current.pendingResultCounters) {
+      for (const participant of current.participants) {
+        const previousCounter = current.pendingResultCounters[participant.id];
+        if (typeof previousCounter === "number" && Number.isFinite(previousCounter)) {
+          participant.spinsSinceLastWon = Math.max(0, Math.floor(previousCounter));
+          revertedParticipants.push({ ...participant });
+        }
+      }
+    }
+
+    current.spinHistory = current.spinHistory.filter((item) => item.id !== spinId);
+    if (current.pendingResultSpinId === spinId || isPendingExpired) {
+      current.pendingResultSpinId = null;
+      current.pendingResultCounters = null;
+      current.pendingResultExpiresAt = null;
+    }
+    const next = await this.bumpAndSave(current);
+
+    if (hadPendingResult) {
+      for (const participant of revertedParticipants) {
+        this.broadcast({
+          type: "participant.updated",
+          groupId: next.group.id,
+          version: next.version,
+          ts: new Date().toISOString(),
+          payload: {
+            participant,
+          },
+        });
+      }
+
+      this.broadcast({
+        type: "spin.result.dismissed",
+        groupId: next.group.id,
+        version: next.version,
+        ts: new Date().toISOString(),
+        payload: {
+          spinId,
+          action: "discard",
+        },
+      });
+    }
+
+    this.broadcast(this.historySnapshotEvent(next));
+    this.send(client.socket, this.commandOk(next, command.requestId, command.type), client.clientId);
+  }
+
+  private async handleSetParticipantActive(
+    client: GroupSocketClient,
+    current: GroupState,
+    command: Extract<GroupRealtimeCommand, { type: "participant.setActive" }>,
+  ): Promise<void> {
+    const participant = current.participants.find((item) => item.id === command.payload.participantId);
+    if (!participant) {
+      throw new Error("Participant not found.");
+    }
+
+    if (typeof command.payload.active !== "boolean") {
+      throw new Error("active must be a boolean.");
+    }
+
+    participant.active = command.payload.active;
+    const next = await this.bumpAndSave(current);
+
+    this.broadcast({
+      type: "participant.updated",
+      groupId: next.group.id,
+      version: next.version,
+      ts: new Date().toISOString(),
+      payload: {
+        participant,
+      },
+    });
+
+    this.send(
+      client.socket,
+      this.commandOk(next, command.requestId, command.type, { participants: next.participants }),
+      client.clientId,
+    );
+  }
+
+  private async handleCommitParticipants(
+    client: GroupSocketClient,
+    current: GroupState,
+    command: CommitParticipantsCommand,
+  ): Promise<void> {
+    const body = command.payload;
+    if (typeof body !== "object" || body === null) {
+      throw new Error("Invalid request body.");
+    }
+
+    const adds = body.adds ?? [];
+    const updates = body.updates ?? [];
+    const removes = body.removes ?? [];
+
+    if (!Array.isArray(adds) || !Array.isArray(updates) || !Array.isArray(removes)) {
+      throw new Error("adds, updates, and removes must be arrays.");
+    }
+
+    const currentById = new Map(current.participants.map((participant) => [participant.id, participant]));
+
+    const removeSet = new Set<string>();
+    for (const participantId of removes) {
+      if (typeof participantId !== "string" || !participantId) {
+        throw new Error("Each remove id must be a non-empty string.");
+      }
+      if (!currentById.has(participantId)) {
+        throw new Error(`Participant not found: ${participantId}`);
+      }
+      if (removeSet.has(participantId)) {
+        throw new Error(`Duplicate remove participant id: ${participantId}`);
+      }
+      if (participantId === current.group.ownerParticipantId) {
+        throw new Error("Owner participant cannot be removed.");
+      }
+      removeSet.add(participantId);
+    }
+
+    const updateMap = new Map<string, { emailId: string | null; manager: boolean }>();
+    for (const update of updates) {
+      if (typeof update !== "object" || update === null) {
+        throw new Error("Each update entry must be an object.");
+      }
+
+      const participantId = update.participantId;
+      if (typeof participantId !== "string" || !participantId) {
+        throw new Error("Each update participantId must be a non-empty string.");
+      }
+      if (!currentById.has(participantId)) {
+        throw new Error(`Participant not found: ${participantId}`);
+      }
+      if (removeSet.has(participantId)) {
+        throw new Error(`Participant cannot be both updated and removed: ${participantId}`);
+      }
+      if (updateMap.has(participantId)) {
+        throw new Error(`Duplicate update participant id: ${participantId}`);
+      }
+
+      const currentParticipant = currentById.get(participantId);
+      if (!currentParticipant) {
+        throw new Error(`Participant not found: ${participantId}`);
+      }
+      if (participantId === current.group.ownerParticipantId) {
+        if (typeof update.emailId !== "undefined") {
+          const nextOwnerEmail = normalizeEmailId(update.emailId);
+          if (nextOwnerEmail !== currentParticipant.emailId) {
+            throw new Error("Owner participant email cannot be changed.");
+          }
+        }
+        if (typeof update.manager !== "undefined" && update.manager !== true) {
+          throw new Error("Owner participant must remain a manager.");
+        }
+      }
+
+      let emailId = currentParticipant.emailId;
+      if (typeof update.emailId !== "undefined") {
+        emailId = normalizeEmailId(update.emailId);
+      }
+
+      let manager = currentParticipant.manager;
+      if (typeof update.manager !== "undefined") {
+        if (typeof update.manager !== "boolean") {
+          throw new Error("manager must be a boolean.");
+        }
+        manager = update.manager;
+      }
+
+      if (manager && !emailId) {
+        throw new Error("manager requires a valid emailId.");
+      }
+      if (!emailId) {
+        manager = false;
+      }
+
+      updateMap.set(participantId, { emailId, manager });
+    }
+
+    const existingNames = new Set(
+      current.participants
+        .filter((participant) => !removeSet.has(participant.id))
+        .map((participant) => participant.name.toLowerCase()),
+    );
+    const addedParticipants: Participant[] = [];
+    for (const add of adds) {
+      if (typeof add !== "object" || add === null) {
+        throw new Error("Each add entry must be an object.");
+      }
+
+      const name = validateName(add.name ?? "");
+      const normalizedName = name.toLowerCase();
+      if (existingNames.has(normalizedName)) {
+        throw new Error("Participant with this name already exists.");
+      }
+      existingNames.add(normalizedName);
+
+      if (typeof add.manager !== "undefined" && typeof add.manager !== "boolean") {
+        throw new Error("manager must be a boolean.");
+      }
+
+      const emailId = normalizeEmailId(add.emailId);
+      const manager = add.manager === true;
+      if (manager && !emailId) {
+        throw new Error("manager requires a valid emailId.");
+      }
+
+      addedParticipants.push({
+        id: randomId(),
+        name,
+        active: true,
+        emailId,
+        manager,
+        spinsSinceLastWon: 0,
+      });
+    }
+
+    current.participants = current.participants
+      .filter((participant) => !removeSet.has(participant.id))
+      .map((participant) => {
+        const updated = updateMap.get(participant.id);
+        if (!updated) {
+          return participant;
+        }
+        if (participant.id === current.group.ownerParticipantId) {
+          return {
+            ...participant,
+            active: true,
+            emailId: participant.emailId,
+            manager: true,
+          };
+        }
+        return {
+          ...participant,
+          emailId: updated.emailId,
+          manager: updated.manager,
+        };
+      });
+
+    current.participants.push(...addedParticipants);
+
+    const next = await this.bumpAndSave(current);
+    const ts = new Date().toISOString();
+
+    for (const participantId of removeSet) {
+      this.broadcast({
+        type: "participant.removed",
+        groupId: next.group.id,
+        version: next.version,
+        ts,
+        payload: {
+          participantId,
+        },
+      });
+    }
+
+    for (const [participantId] of updateMap) {
+      const participant = next.participants.find((item) => item.id === participantId);
+      if (!participant) {
+        continue;
+      }
+
+      this.broadcast({
+        type: "participant.updated",
+        groupId: next.group.id,
+        version: next.version,
+        ts,
+        payload: {
+          participant,
+        },
+      });
+    }
+
+    for (const participant of addedParticipants) {
+      this.broadcast({
+        type: "participant.added",
+        groupId: next.group.id,
+        version: next.version,
+        ts,
+        payload: {
+          participant,
+        },
+      });
+    }
+
+    this.broadcastSnapshots(next);
+    this.send(
+      client.socket,
+      this.commandOk(next, command.requestId, command.type, { participants: next.participants }),
+      client.clientId,
+    );
+  }
+
+  private broadcastSnapshots(current: GroupState): void {
+    for (const [clientId, client] of this.sockets.entries()) {
+      this.send(client.socket, this.snapshotEvent(current, client.viewer), clientId);
+    }
   }
 
   private async resolveSpin(spinId: string): Promise<void> {
@@ -914,9 +1000,7 @@ export class GroupDurableObject {
     current.spinHistory.push({
       id: completedSpinId,
       createdAt: resolvedAt,
-      participants: cloneParticipants(
-        current.participants.filter((participant) => participant.active),
-      ),
+      participants: cloneParticipants(current.participants.filter((participant) => participant.active)),
       winnerParticipantId,
     });
     current.spinHistory = current.spinHistory.slice(-MAX_SPIN_HISTORY_ITEMS);
@@ -948,11 +1032,13 @@ export class GroupDurableObject {
         },
       });
     }
+
+    this.broadcast(this.historySnapshotEvent(current));
   }
 
-  private send(socket: WebSocket, event: GroupRealtimeEvent, clientId?: string): void {
+  private send(socket: WebSocket, message: GroupRealtimeServerMessage, clientId?: string): void {
     try {
-      socket.send(JSON.stringify(event));
+      socket.send(JSON.stringify(message));
     } catch {
       if (clientId) {
         this.sockets.delete(clientId);
@@ -965,9 +1051,9 @@ export class GroupDurableObject {
     }
   }
 
-  private broadcast(event: GroupRealtimeEvent): void {
-    for (const [clientId, socket] of this.sockets.entries()) {
-      this.send(socket, event, clientId);
+  private broadcast(message: GroupRealtimeEvent): void {
+    for (const [clientId, client] of this.sockets.entries()) {
+      this.send(client.socket, message, clientId);
     }
   }
 

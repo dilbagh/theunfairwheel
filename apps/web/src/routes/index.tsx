@@ -2,6 +2,7 @@ import { SignInButton, useAuth } from "@clerk/clerk-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FormEvent, useEffect, useState } from "react";
+import { IconLogin, IconSpark } from "../components/button-icons";
 import { audioEngine } from "../lib/audio";
 import { useGroupsApi } from "../lib/groups";
 import { getLastGroupId, setLastGroupId } from "../lib/storage";
@@ -74,11 +75,11 @@ function Home() {
   }
 
   return (
-    <section className="center-panel reveal-up" aria-labelledby="create-group-heading">
-      <p className="eyebrow">The Unfair Wheel</p>
+    <section className="center-panel create-group-panel reveal-up" aria-labelledby="create-group-heading">
+      <p className="eyebrow create-group-eyebrow">The Unfair Wheel</p>
       <h1 id="create-group-heading">Create Your Group</h1>
 
-      <form className="form-stack" onSubmit={onSubmit}>
+      <form className="form-stack create-group-form" onSubmit={onSubmit}>
         {isSignedIn && (
           <>
             <label htmlFor="groupName" className="field-label">
@@ -99,20 +100,28 @@ function Home() {
               className="primary-btn"
               disabled={createGroupMutation.isPending}
             >
-              {createGroupMutation.isPending ? "Creating..." : "Create Group"}
+              <span className="btn-content">
+                <IconSpark />
+                <span className="btn-label">
+                  {createGroupMutation.isPending ? "Creating..." : "Create Group"}
+                </span>
+              </span>
             </button>
           </>
         )}
         {!isSignedIn && (
           <SignInButton mode="modal">
             <button type="button" className="ghost-btn">
-              Sign In to Create Group
+              <span className="btn-content">
+                <IconLogin />
+                <span className="btn-label">Sign In to Create Group</span>
+              </span>
             </button>
           </SignInButton>
         )}
       </form>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && <p className="error-text create-group-error">{error}</p>}
     </section>
   );
 }

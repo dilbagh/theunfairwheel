@@ -8,6 +8,12 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, createRootRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import {
+  IconClose,
+  IconFolder,
+  IconLogin,
+  IconUsers,
+} from "../components/button-icons";
 import { type GroupSummary, useGroupsApi } from "../lib/groups";
 
 export const Route = createRootRoute({
@@ -33,7 +39,6 @@ function RootComponent() {
   });
 
   const groups = myGroupsQuery.data ?? EMPTY_GROUPS;
-  const bookmarkedGroupIds = bookmarkedGroupIdsQuery.data ?? [];
   const ownedGroups = useMemo(
     () => groups.filter((group) => user && group.ownerUserId === user.id),
     [groups, user],
@@ -43,11 +48,12 @@ function RootComponent() {
       return [];
     }
 
+    const bookmarkedGroupIds = bookmarkedGroupIdsQuery.data ?? [];
     const bookmarkedIds = new Set(bookmarkedGroupIds);
     return groups.filter(
       (group) => group.ownerUserId !== user.id && bookmarkedIds.has(group.id),
     );
-  }, [bookmarkedGroupIds, groups, user]);
+  }, [bookmarkedGroupIdsQuery.data, groups, user]);
   const isLoadingModalData =
     myGroupsQuery.isLoading || bookmarkedGroupIdsQuery.isLoading;
   const hasModalDataError =
@@ -61,9 +67,12 @@ function RootComponent() {
       <div className="app-frame">
         <header className="global-nav panel" aria-label="Main navigation">
           <Link to="/" className="brand-link">
-            <span className="brand-mark" aria-hidden>
-              ◉
-            </span>
+            <img
+              className="brand-logo"
+              src="/logo.svg"
+              alt=""
+              aria-hidden="true"
+            />
             <span className="brand-name">The Unfair Wheel</span>
           </Link>
           <div className="global-nav-actions">
@@ -75,14 +84,20 @@ function RootComponent() {
                   setIsGroupSelectorOpen(true);
                 }}
               >
-                My Groups
+                <span className="btn-content">
+                  <IconFolder />
+                  <span className="btn-label">My Groups</span>
+                </span>
               </button>
               <UserButton />
             </SignedIn>
             <SignedOut>
               <SignInButton mode="modal">
                 <button type="button" className="ghost-btn">
-                  Log In
+                  <span className="btn-content">
+                    <IconLogin />
+                    <span className="btn-label">Log In</span>
+                  </span>
                 </button>
               </SignInButton>
             </SignedOut>
@@ -178,7 +193,10 @@ function RootComponent() {
                             setIsGroupSelectorOpen(false);
                           }}
                         >
-                          {group.name}
+                          <span className="btn-content">
+                            <IconUsers />
+                            <span className="btn-label">{group.name}</span>
+                          </span>
                         </Link>
                       </li>
                     ))}
@@ -205,7 +223,10 @@ function RootComponent() {
                             setIsGroupSelectorOpen(false);
                           }}
                         >
-                          {group.name}
+                          <span className="btn-content">
+                            <IconUsers />
+                            <span className="btn-label">{group.name}</span>
+                          </span>
                         </Link>
                       </li>
                     ))}
@@ -221,7 +242,10 @@ function RootComponent() {
                   setIsGroupSelectorOpen(false);
                 }}
               >
-                Close
+                <span className="btn-content">
+                  <IconClose />
+                  <span className="btn-label">Close</span>
+                </span>
               </button>
             </div>
           </div>

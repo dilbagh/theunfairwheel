@@ -1,8 +1,12 @@
 import { useAuth, useUser } from "@clerk/clerk-react";
 import { useMemo } from "react";
 import type {
+  GroupRealtimeCommand,
   GroupRealtimeEvent,
+  GroupRealtimeServerMessage,
+  GroupSocketSnapshot,
   GroupSpinState,
+  GroupViewerAccess,
   SpinHistoryItem,
 } from "@repo/backend";
 
@@ -33,37 +37,17 @@ export type GroupsApi = {
   listMyGroups(): Promise<GroupSummary[]>;
   listBookmarkedGroupIds(): Promise<string[]>;
   setBookmarkedGroupIds(input: { groupIds: string[] }): Promise<string[]>;
-  getGroup(input: { id: string }): Promise<Group>;
-  renameGroup(input: { groupId: string; name: string }): Promise<Group>;
-  requestSpin(input: { groupId: string }): Promise<{ spin: GroupSpinState }>;
-  listSpinHistory(input: { groupId: string }): Promise<SpinHistoryItem[]>;
-  saveSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
-  discardSpinHistoryItem(input: { groupId: string; spinId: string }): Promise<void>;
-  listParticipants(input: { groupId: string }): Promise<Participant[]>;
-  addParticipant(input: {
-    groupId: string;
-    name: string;
-    emailId?: string | null;
-    manager?: boolean;
-  }): Promise<Participant>;
-  removeParticipant(input: {
-    groupId: string;
-    participantId: string;
-  }): Promise<void>;
-  setParticipantActive(input: {
-    groupId: string;
-    participantId: string;
-    active: boolean;
-  }): Promise<Participant>;
-  commitParticipants(input: {
-    groupId: string;
-    adds: Array<{ name: string; emailId: string | null; manager: boolean }>;
-    updates: Array<{ participantId: string; emailId: string | null; manager: boolean }>;
-    removes: string[];
-  }): Promise<Participant[]>;
 };
 
-export type { GroupRealtimeEvent, GroupSpinState };
+export type {
+  GroupRealtimeCommand,
+  GroupRealtimeEvent,
+  GroupRealtimeServerMessage,
+  GroupSocketSnapshot,
+  GroupSpinState,
+  GroupViewerAccess,
+  SpinHistoryItem,
+};
 
 export class ApiError extends Error {
   constructor(
@@ -172,137 +156,6 @@ export function createGroupsApi(getToken?: TokenFactory): GroupsApi {
       );
 
       return expectJson<string[]>(response);
-    },
-
-    async getGroup(input) {
-      const response = await request(`/groups/${encodeURIComponent(input.id)}`, { method: "GET" });
-      return expectJson<Group>(response);
-    },
-
-    async renameGroup(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ name: input.name }),
-        },
-        getToken,
-      );
-
-      return expectJson<Group>(response);
-    },
-
-    async requestSpin(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/spin`,
-        { method: "POST" },
-        getToken,
-      );
-
-      return expectJson<{ spin: GroupSpinState }>(response);
-    },
-
-    async listSpinHistory(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/history`,
-        { method: "GET" },
-        getToken,
-      );
-
-      return expectJson<SpinHistoryItem[]>(response);
-    },
-
-    async saveSpinHistoryItem(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/history/${encodeURIComponent(input.spinId)}/save`,
-        { method: "POST" },
-        getToken,
-      );
-
-      if (!response.ok) {
-        throw new ApiError(await readError(response), response.status);
-      }
-    },
-
-    async discardSpinHistoryItem(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/history/${encodeURIComponent(input.spinId)}`,
-        { method: "DELETE" },
-        getToken,
-      );
-
-      if (!response.ok) {
-        throw new ApiError(await readError(response), response.status);
-      }
-    },
-
-    async listParticipants(input) {
-      const response = await request(`/groups/${encodeURIComponent(input.groupId)}/participants`, {
-        method: "GET",
-      });
-
-      return expectJson<Participant[]>(response);
-    },
-
-    async addParticipant(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/participants`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: input.name,
-            emailId: input.emailId,
-            manager: input.manager,
-          }),
-        },
-        getToken,
-      );
-
-      return expectJson<Participant>(response);
-    },
-
-    async removeParticipant(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/participants/${encodeURIComponent(input.participantId)}`,
-        {
-          method: "DELETE",
-        },
-        getToken,
-      );
-
-      if (!response.ok) {
-        throw new ApiError(await readError(response), response.status);
-      }
-    },
-
-    async setParticipantActive(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/participants/${encodeURIComponent(input.participantId)}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ active: input.active }),
-        },
-        getToken,
-      );
-
-      return expectJson<Participant>(response);
-    },
-
-    async commitParticipants(input) {
-      const response = await request(
-        `/groups/${encodeURIComponent(input.groupId)}/participants/commit`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            adds: input.adds,
-            updates: input.updates,
-            removes: input.removes,
-          }),
-        },
-        getToken,
-      );
-
-      return expectJson<Participant[]>(response);
     },
   };
 }

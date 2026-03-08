@@ -1,48 +1,21 @@
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { getAuthContext, type AuthContext } from "../auth";
-import {
-  randomId,
-  type Group,
-  type GroupIndexRecord,
-  type Participant,
-  validateName,
-} from "../domain/group";
+import { getAuthContext } from "../auth";
+import { randomId, type Group, type GroupIndexRecord, type Participant, validateName } from "../domain/group";
+import type { GroupRealtimeServerMessage, GroupViewerIdentity } from "../domain/realtime";
 import type { AppEnv, DurableObjectStubLike } from "../types";
 
 type ErrorBody = {
   error: string;
 };
 
-type GroupAccessProfile = {
-  group: Group;
-  participant: Participant | null;
-  isOwner: boolean;
-  isParticipant: boolean;
-  isManager: boolean;
-};
-
 type AppContext = import("hono").Context<AppEnv>;
+type BridgeSocket = WebSocket & { accept(): void };
+type UpgradedResponse = Response & { webSocket?: WebSocket };
+
+const VIEWER_HEADER = "x-group-viewer";
 
 const createGroupBody = validator("json", (value) => value as { name?: string });
-const renameGroupBody = validator("json", (value) => value as { name?: string });
-const addParticipantBody = validator("json", (value) =>
-  value as { name?: string; emailId?: string | null; manager?: boolean },
-);
-const updateParticipantBody = validator("json", (value) =>
-  value as { active?: boolean; emailId?: string | null; manager?: boolean },
-);
-const commitParticipantsBody = validator("json", (value) =>
-  value as {
-    adds?: Array<{ name?: string; emailId?: string | null; manager?: boolean }>;
-    updates?: Array<{
-      participantId?: string;
-      emailId?: string | null;
-      manager?: boolean;
-    }>;
-    removes?: string[];
-  },
-);
 const bookmarksBody = validator("json", (value) => value as { groupIds?: string[] });
 
 function normalizeEmail(email: string): string {
@@ -91,7 +64,7 @@ async function parseError(response: Response): Promise<string> {
   }
 }
 
-async function requireAuth(c: AppContext): Promise<AuthContext | Response> {
+async function requireAuth(c: AppContext) {
   const auth = await getAuthContext(c);
   if (!auth.isAuthenticated || !auth.userId) {
     return c.json({ error: "Authentication required." }, 401);
@@ -100,99 +73,7 @@ async function requireAuth(c: AppContext): Promise<AuthContext | Response> {
   return auth;
 }
 
-async function getGroup(groupId: string, c: AppContext): Promise<Group | null> {
-  const response = await callDurableObject(groupStub(c, groupId), "/group");
-  if (!response.ok) {
-    return null;
-  }
-
-  return (await response.json()) as Group;
-}
-
-async function getParticipants(
-  groupId: string,
-  c: AppContext,
-): Promise<Participant[] | null> {
-  const response = await callDurableObject(groupStub(c, groupId), "/participants");
-  if (!response.ok) {
-    return null;
-  }
-
-  return (await response.json()) as Participant[];
-}
-
-async function getGroupAccessProfile(
-  c: AppContext,
-  groupId: string,
-  auth: AuthContext,
-): Promise<GroupAccessProfile | null> {
-  const [group, participants] = await Promise.all([getGroup(groupId, c), getParticipants(groupId, c)]);
-
-  if (!group || !participants) {
-    return null;
-  }
-
-  const matchedParticipant = participants.find((participant) => {
-    if (!participant.emailId) {
-      return false;
-    }
-
-    return auth.verifiedEmails.includes(normalizeEmail(participant.emailId));
-  });
-
-  const isOwner = auth.userId === group.ownerUserId;
-  const isParticipant = Boolean(matchedParticipant);
-
-  return {
-    group,
-    participant: matchedParticipant ?? null,
-    isOwner,
-    isParticipant,
-    isManager: Boolean(matchedParticipant?.manager),
-  };
-}
-
-async function requireParticipant(
-  c: AppContext,
-  groupId: string,
-): Promise<GroupAccessProfile | Response> {
-  const auth = await requireAuth(c);
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  const profile = await getGroupAccessProfile(c, groupId, auth);
-  if (!profile) {
-    return c.json({ error: "Group not found." }, 404);
-  }
-
-  if (!profile.isParticipant && !profile.isOwner) {
-    return c.json({ error: "You do not have access to this group." }, 403);
-  }
-
-  return profile;
-}
-
-async function requireManager(
-  c: AppContext,
-  groupId: string,
-): Promise<GroupAccessProfile | Response> {
-  const participantAccess = await requireParticipant(c, groupId);
-  if (participantAccess instanceof Response) {
-    return participantAccess;
-  }
-
-  if (!participantAccess.isManager) {
-    return c.json({ error: "Manager access is required." }, 403);
-  }
-
-  return participantAccess;
-}
-
-async function listAllKeys(
-  c: AppContext,
-  prefix: string,
-): Promise<string[]> {
+async function listAllKeys(c: AppContext, prefix: string): Promise<string[]> {
   const keys: string[] = [];
   let cursor: string | undefined;
 
@@ -274,6 +155,46 @@ async function syncParticipantGroupIndex(
   await c.env.GROUP_INDEX_KV.put(participantIndexKey(groupId), JSON.stringify(Array.from(nextEmails).sort()));
 }
 
+function encodeViewer(viewer: GroupViewerIdentity): string {
+  return btoa(JSON.stringify(viewer));
+}
+
+async function syncFromDoMessage(c: AppContext, message: GroupRealtimeServerMessage): Promise<void> {
+  if (message.type !== "command.ok" || !message.payload.sync) {
+    return;
+  }
+
+  const { group, participants } = message.payload.sync;
+  if (group) {
+    const indexRecord: GroupIndexRecord = {
+      id: group.id,
+      name: group.name,
+      createdAt: group.createdAt,
+      ownerUserId: group.ownerUserId,
+      ownerEmail: group.ownerEmail,
+    };
+    await c.env.GROUP_INDEX_KV.put(groupKey(group.id), JSON.stringify(indexRecord));
+  }
+
+  if (participants) {
+    await syncParticipantGroupIndex(c, message.groupId, participants);
+  }
+}
+
+function relayClose(source: BridgeSocket, target: BridgeSocket, code = 1000, reason?: string): void {
+  try {
+    target.close(code, reason);
+  } catch {
+    // no-op
+  }
+
+  try {
+    source.close(code, reason);
+  } catch {
+    // no-op
+  }
+}
+
 const groupsRoutes = new Hono<AppEnv>()
   .post("/groups", createGroupBody, async (c) => {
     const auth = await requireAuth(c);
@@ -292,22 +213,21 @@ const groupsRoutes = new Hono<AppEnv>()
     if (!ownerEmail) {
       return c.json({ error: "At least one verified email is required." }, 400);
     }
-    const ownerUserId = auth.userId;
-    if (!ownerUserId) {
+    const userId = auth.userId;
+    if (!userId) {
       return c.json({ error: "Authentication required." }, 401);
     }
 
     const groupId = randomId();
     const ownerParticipantId = randomId();
     const ownerNameFromProfile = (auth.firstName ?? "").trim();
-    const ownerName =
-      ownerNameFromProfile || ownerEmail.split("@")[0]?.trim() || "Owner";
+    const ownerName = ownerNameFromProfile || ownerEmail.split("@")[0]?.trim() || "Owner";
 
     const group: Group = {
       id: groupId,
       name,
       createdAt: new Date().toISOString(),
-      ownerUserId,
+      ownerUserId: userId,
       ownerEmail,
       ownerParticipantId,
     };
@@ -329,10 +249,7 @@ const groupsRoutes = new Hono<AppEnv>()
     });
 
     if (!initResponse.ok) {
-      return c.json(
-        { error: await parseError(initResponse) },
-        initResponse.status as 400 | 500,
-      );
+      return c.json({ error: await parseError(initResponse) }, initResponse.status as 400 | 500);
     }
 
     const indexRecord: GroupIndexRecord = {
@@ -354,12 +271,16 @@ const groupsRoutes = new Hono<AppEnv>()
     if (auth instanceof Response) {
       return auth;
     }
+    const userId = auth.userId;
+    if (!userId) {
+      return c.json({ error: "Authentication required." }, 401);
+    }
 
     const groupIds = new Set<string>();
 
-    const ownerKeys = await listAllKeys(c, `owner-group:${auth.userId}:`);
+    const ownerKeys = await listAllKeys(c, `owner-group:${userId}:`);
     for (const key of ownerKeys) {
-      const groupId = key.slice(`owner-group:${auth.userId}:`.length);
+      const groupId = key.slice(`owner-group:${userId}:`.length);
       if (groupId) {
         groupIds.add(groupId);
       }
@@ -383,8 +304,7 @@ const groupsRoutes = new Hono<AppEnv>()
       }
 
       try {
-        const record = JSON.parse(raw) as GroupIndexRecord;
-        groups.push(record);
+        groups.push(JSON.parse(raw) as GroupIndexRecord);
       } catch {
         // Ignore malformed KV data.
       }
@@ -399,7 +319,6 @@ const groupsRoutes = new Hono<AppEnv>()
     if (auth instanceof Response) {
       return auth;
     }
-
     const userId = auth.userId;
     if (!userId) {
       return c.json({ error: "Authentication required." }, 401);
@@ -413,7 +332,6 @@ const groupsRoutes = new Hono<AppEnv>()
     if (auth instanceof Response) {
       return auth;
     }
-
     const userId = auth.userId;
     if (!userId) {
       return c.json({ error: "Authentication required." }, 401);
@@ -434,270 +352,93 @@ const groupsRoutes = new Hono<AppEnv>()
     await c.env.GROUP_INDEX_KV.put(bookmarksKey(userId), JSON.stringify(normalized));
     return c.json(normalized);
   })
-  .get("/groups/:groupId", async (c) => {
-    const groupId = c.req.param("groupId");
-    const response = await callDurableObject(groupStub(c, groupId), "/group");
-
-    if (!response.ok) {
-      return c.json({ error: await parseError(response) }, response.status as 404 | 500);
-    }
-
-    return c.json(await response.json());
-  })
-  .patch("/groups/:groupId", renameGroupBody, async (c) => {
-    const groupId = c.req.param("groupId");
-    const managerAccess = await requireManager(c, groupId);
-    if (managerAccess instanceof Response) {
-      return managerAccess;
-    }
-
-    const body = c.req.valid("json");
-
-    const response = await callDurableObject(groupStub(c, groupId), "/group", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: body.name }),
-    });
-
-    if (!response.ok) {
-      return c.json(
-        { error: await parseError(response) },
-        response.status as 400 | 404 | 500,
-      );
-    }
-
-    const renamedGroup = (await response.json()) as Group;
-    const indexRecord: GroupIndexRecord = {
-      id: renamedGroup.id,
-      name: renamedGroup.name,
-      createdAt: renamedGroup.createdAt,
-      ownerUserId: renamedGroup.ownerUserId,
-      ownerEmail: renamedGroup.ownerEmail,
-    };
-    await c.env.GROUP_INDEX_KV.put(groupKey(renamedGroup.id), JSON.stringify(indexRecord));
-
-    return c.json(renamedGroup);
-  })
   .get("/groups/:groupId/ws", async (c) => {
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) {
+      return auth;
+    }
+    const userId = auth.userId;
+    if (!userId) {
+      return c.json({ error: "Authentication required." }, 401);
+    }
+
     const groupId = c.req.param("groupId");
-    const response = await callDurableObject(groupStub(c, groupId), "/ws", {
+    const viewer: GroupViewerIdentity = {
+      userId,
+      verifiedEmails: auth.verifiedEmails,
+      primaryEmail: auth.primaryEmail,
+      firstName: auth.firstName,
+      lastName: auth.lastName,
+    };
+
+    const upstreamResponse = (await callDurableObject(groupStub(c, groupId), "/ws", {
       method: "GET",
-      headers: c.req.raw.headers,
-    });
-
-    if (response.status === 101) {
-      return response;
-    }
-
-    return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
-  })
-  .post("/groups/:groupId/spin", async (c) => {
-    const groupId = c.req.param("groupId");
-    const participantAccess = await requireParticipant(c, groupId);
-    if (participantAccess instanceof Response) {
-      return participantAccess;
-    }
-
-    const response = await callDurableObject(groupStub(c, groupId), "/spin", {
-      method: "POST",
-    });
-
-    if (!response.ok) {
-      return c.json(
-        { error: await parseError(response) },
-        response.status as 404 | 409 | 500,
-      );
-    }
-
-    return c.json(await response.json(), 202);
-  })
-  .get("/groups/:groupId/history", async (c) => {
-    const groupId = c.req.param("groupId");
-    const participantAccess = await requireParticipant(c, groupId);
-    if (participantAccess instanceof Response) {
-      return participantAccess;
-    }
-
-    const response = await callDurableObject(groupStub(c, groupId), "/history");
-
-    if (!response.ok) {
-      return c.json({ error: await parseError(response) }, response.status as 404 | 500);
-    }
-
-    return c.json(await response.json());
-  })
-  .delete("/groups/:groupId/history/:spinId", async (c) => {
-    const groupId = c.req.param("groupId");
-    const spinId = c.req.param("spinId");
-    const participantAccess = await requireParticipant(c, groupId);
-    if (participantAccess instanceof Response) {
-      return participantAccess;
-    }
-
-    const response = await callDurableObject(
-      groupStub(c, groupId),
-      `/history/${spinId}`,
-      { method: "DELETE" },
-    );
-
-    if (!response.ok) {
-      return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
-    }
-
-    return c.body(null, 204);
-  })
-  .post("/groups/:groupId/history/:spinId/save", async (c) => {
-    const groupId = c.req.param("groupId");
-    const spinId = c.req.param("spinId");
-    const participantAccess = await requireParticipant(c, groupId);
-    if (participantAccess instanceof Response) {
-      return participantAccess;
-    }
-
-    const response = await callDurableObject(
-      groupStub(c, groupId),
-      `/history/${spinId}/save`,
-      { method: "POST" },
-    );
-
-    if (!response.ok) {
-      return c.json({ error: await parseError(response) }, response.status as 400 | 404 | 500);
-    }
-
-    return c.body(null, 204);
-  })
-  .get("/groups/:groupId/participants", async (c) => {
-    const groupId = c.req.param("groupId");
-    const response = await callDurableObject(groupStub(c, groupId), "/participants");
-
-    if (!response.ok) {
-      return c.json({ error: await parseError(response) }, response.status as 404 | 500);
-    }
-
-    return c.json(await response.json());
-  })
-  .post("/groups/:groupId/participants", addParticipantBody, async (c) => {
-    const groupId = c.req.param("groupId");
-    const managerAccess = await requireManager(c, groupId);
-    if (managerAccess instanceof Response) {
-      return managerAccess;
-    }
-
-    const body = c.req.valid("json");
-
-    const response = await callDurableObject(groupStub(c, groupId), "/participants", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      return c.json(
-        { error: await parseError(response) },
-        response.status as 400 | 404 | 409 | 500,
-      );
-    }
-
-    const created = (await response.json()) as Participant;
-    const participants = await getParticipants(groupId, c);
-    if (participants) {
-      await syncParticipantGroupIndex(c, groupId, participants);
-    }
-
-    return c.json(created, 201);
-  })
-  .patch("/groups/:groupId/participants/:participantId", updateParticipantBody, async (c) => {
-    const groupId = c.req.param("groupId");
-    const participantId = c.req.param("participantId");
-    const participantAccess = await requireParticipant(c, groupId);
-    if (participantAccess instanceof Response) {
-      return participantAccess;
-    }
-    const body = c.req.valid("json");
-    const updatesActive = typeof body.active !== "undefined";
-    const updatesEmail = typeof body.emailId !== "undefined";
-    const updatesManager = typeof body.manager !== "undefined";
-
-    if (!participantAccess.isManager && (updatesEmail || updatesManager || !updatesActive)) {
-      return c.json({ error: "Manager access is required." }, 403);
-    }
-
-    const response = await callDurableObject(
-      groupStub(c, groupId),
-      `/participants/${participantId}`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+      headers: {
+        Upgrade: "websocket",
+        [VIEWER_HEADER]: encodeViewer(viewer),
       },
-    );
+    })) as UpgradedResponse;
 
-    if (!response.ok) {
+    if (upstreamResponse.status !== 101 || !upstreamResponse.webSocket) {
       return c.json(
-        { error: await parseError(response) },
-        response.status as 400 | 404 | 500,
+        { error: await parseError(upstreamResponse) },
+        upstreamResponse.status as 400 | 401 | 404 | 500,
       );
     }
 
-    const updated = (await response.json()) as Participant;
-    const participants = await getParticipants(groupId, c);
-    if (participants) {
-      await syncParticipantGroupIndex(c, groupId, participants);
-    }
+    const WebSocketPairCtor = globalThis as unknown as {
+      WebSocketPair: new () => { 0: WebSocket; 1: WebSocket };
+    };
+    const pair = new WebSocketPairCtor.WebSocketPair();
+    const clientSocket = pair[0] as BridgeSocket;
+    const workerSocket = pair[1] as BridgeSocket;
+    const upstreamSocket = upstreamResponse.webSocket as BridgeSocket;
 
-    return c.json(updated);
-  })
-  .post("/groups/:groupId/participants/commit", commitParticipantsBody, async (c) => {
-    const groupId = c.req.param("groupId");
-    const managerAccess = await requireManager(c, groupId);
-    if (managerAccess instanceof Response) {
-      return managerAccess;
-    }
+    workerSocket.accept();
+    upstreamSocket.accept();
 
-    const body = c.req.valid("json");
-
-    const response = await callDurableObject(groupStub(c, groupId), "/participants/commit", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+    workerSocket.addEventListener("message", (event) => {
+      try {
+        upstreamSocket.send(event.data);
+      } catch {
+        relayClose(workerSocket, upstreamSocket, 1011, "Proxy send failure");
+      }
     });
 
-    if (!response.ok) {
-      return c.json(
-        { error: await parseError(response) },
-        response.status as 400 | 404 | 409 | 500,
-      );
-    }
+    upstreamSocket.addEventListener("message", (event) => {
+      const data = String(event.data);
+      try {
+        const parsed = JSON.parse(data) as GroupRealtimeServerMessage;
+        void syncFromDoMessage(c, parsed);
+      } catch {
+        // Pass through malformed upstream payloads unchanged.
+      }
 
-    const participants = (await response.json()) as Participant[];
-    await syncParticipantGroupIndex(c, groupId, participants);
+      try {
+        workerSocket.send(data);
+      } catch {
+        relayClose(workerSocket, upstreamSocket, 1011, "Proxy send failure");
+      }
+    });
 
-    return c.json(participants);
-  })
-  .delete("/groups/:groupId/participants/:participantId", async (c) => {
-    const groupId = c.req.param("groupId");
-    const participantId = c.req.param("participantId");
-    const managerAccess = await requireManager(c, groupId);
-    if (managerAccess instanceof Response) {
-      return managerAccess;
-    }
+    workerSocket.addEventListener("close", (event) => {
+      relayClose(workerSocket, upstreamSocket, event.code, event.reason);
+    });
+    upstreamSocket.addEventListener("close", (event) => {
+      relayClose(upstreamSocket, workerSocket, event.code, event.reason);
+    });
 
-    const response = await callDurableObject(
-      groupStub(c, groupId),
-      `/participants/${participantId}`,
-      { method: "DELETE" },
-    );
+    workerSocket.addEventListener("error", () => {
+      relayClose(workerSocket, upstreamSocket, 1011, "Socket error");
+    });
+    upstreamSocket.addEventListener("error", () => {
+      relayClose(upstreamSocket, workerSocket, 1011, "Socket error");
+    });
 
-    if (!response.ok) {
-      return c.json({ error: await parseError(response) }, response.status as 404 | 500);
-    }
-
-    const participants = await getParticipants(groupId, c);
-    if (participants) {
-      await syncParticipantGroupIndex(c, groupId, participants);
-    }
-
-    return c.body(null, 204);
+    return new Response(null, {
+      status: 101,
+      webSocket: clientSocket,
+    } as ResponseInit & { webSocket: WebSocket });
   });
 
 export { groupsRoutes };

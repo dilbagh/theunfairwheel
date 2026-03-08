@@ -20,7 +20,9 @@ function normalizeEmail(email: string): string {
 function getBearerToken(c: Context<AppEnv>): string | null {
   const authorization = c.req.header("authorization");
   if (!authorization) {
-    return null;
+    const url = new URL(c.req.url);
+    const token = url.searchParams.get("token");
+    return token && token.trim().length > 0 ? token.trim() : null;
   }
 
   const [scheme, token] = authorization.split(/\s+/, 2);

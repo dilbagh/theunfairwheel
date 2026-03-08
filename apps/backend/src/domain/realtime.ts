@@ -17,6 +17,34 @@ export type GroupSpinState = {
   extraTurns: number | null;
 };
 
+export type GroupViewerIdentity = {
+  userId: string;
+  verifiedEmails: string[];
+  primaryEmail: string | null;
+  firstName: string | null;
+  lastName: string | null;
+};
+
+export type GroupViewerAccess = {
+  isOwner: boolean;
+  isParticipant: boolean;
+  isManager: boolean;
+  participantId: string | null;
+};
+
+export type GroupSocketSnapshot = {
+  group: Group;
+  participants: Participant[];
+  spin: GroupSpinState;
+  history: SpinHistoryItem[];
+  viewer: GroupViewerAccess;
+};
+
+export type GroupIndexSync = {
+  group?: Group;
+  participants?: Participant[];
+};
+
 type EventEnvelope<TType extends string, TPayload> = {
   type: TType;
   groupId: string;
@@ -25,12 +53,78 @@ type EventEnvelope<TType extends string, TPayload> = {
   payload: TPayload;
 };
 
+type CommandEnvelope<TType extends string, TPayload> = {
+  type: TType;
+  requestId: string;
+  payload: TPayload;
+};
+
+export type LoadHistoryCommand = CommandEnvelope<
+  "load.history",
+  Record<string, never>
+>;
+
+export type RenameGroupCommand = CommandEnvelope<
+  "group.rename",
+  {
+    name: string;
+  }
+>;
+
+export type SpinStartCommand = CommandEnvelope<
+  "spin.start",
+  Record<string, never>
+>;
+
+export type SaveHistoryCommand = CommandEnvelope<
+  "history.save",
+  {
+    spinId: string;
+  }
+>;
+
+export type DiscardHistoryCommand = CommandEnvelope<
+  "history.discard",
+  {
+    spinId: string;
+  }
+>;
+
+export type SetParticipantActiveCommand = CommandEnvelope<
+  "participant.setActive",
+  {
+    participantId: string;
+    active: boolean;
+  }
+>;
+
+export type CommitParticipantsCommand = CommandEnvelope<
+  "participants.commit",
+  {
+    adds: Array<{ name: string; emailId: string | null; manager: boolean }>;
+    updates: Array<{ participantId: string; emailId: string | null; manager: boolean }>;
+    removes: string[];
+  }
+>;
+
+export type GroupRealtimeCommand =
+  | LoadHistoryCommand
+  | RenameGroupCommand
+  | SpinStartCommand
+  | SaveHistoryCommand
+  | DiscardHistoryCommand
+  | SetParticipantActiveCommand
+  | CommitParticipantsCommand;
+
 export type GroupSnapshotEvent = EventEnvelope<
   "snapshot",
+  GroupSocketSnapshot
+>;
+
+export type HistorySnapshotEvent = EventEnvelope<
+  "history.snapshot",
   {
-    group: Group;
-    participants: Participant[];
-    spin: GroupSpinState;
+    history: SpinHistoryItem[];
   }
 >;
 
@@ -84,8 +178,28 @@ export type GroupUpdatedEvent = EventEnvelope<
   }
 >;
 
+export type GroupCommandOkMessage = EventEnvelope<
+  "command.ok",
+  {
+    requestId: string;
+    commandType: GroupRealtimeCommand["type"];
+    sync?: GroupIndexSync;
+  }
+>;
+
+export type GroupCommandErrorMessage = EventEnvelope<
+  "command.error",
+  {
+    requestId: string;
+    commandType: GroupRealtimeCommand["type"];
+    error: string;
+    status: number;
+  }
+>;
+
 export type GroupRealtimeEvent =
   | GroupSnapshotEvent
+  | HistorySnapshotEvent
   | GroupUpdatedEvent
   | ParticipantAddedEvent
   | ParticipantUpdatedEvent
@@ -93,3 +207,8 @@ export type GroupRealtimeEvent =
   | SpinStartedEvent
   | SpinResolvedEvent
   | SpinResultDismissedEvent;
+
+export type GroupRealtimeServerMessage =
+  | GroupRealtimeEvent
+  | GroupCommandOkMessage
+  | GroupCommandErrorMessage;

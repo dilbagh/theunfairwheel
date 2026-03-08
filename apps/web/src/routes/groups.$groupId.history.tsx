@@ -1,7 +1,8 @@
 import { SignInButton } from "@clerk/clerk-react";
-import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ApiError, useCurrentUserEmailSet, useGroupsApi } from "../lib/groups";
+import { useEffect } from "react";
+import { IconArrowLeft, IconLogin } from "../components/button-icons";
+import { useGroupSession } from "../lib/group-session";
 
 export const Route = createFileRoute("/groups/$groupId/history")({
   component: GroupHistoryPage,
@@ -24,83 +25,69 @@ function formatSpinTimestamp(timestamp: string): string {
 
 function GroupHistoryPage() {
   const { groupId } = Route.useParams();
-  const groupsApi = useGroupsApi();
-  const userEmails = useCurrentUserEmailSet();
+  const groupSession = useGroupSession(groupId);
+  const canLoadHistory = Boolean(groupSession.viewer?.isParticipant || groupSession.viewer?.isOwner);
+  const requestHistory = groupSession.request;
 
-  const participantsQuery = useQuery({
-    queryKey: ["participants", groupId],
-    queryFn: () => groupsApi.listParticipants({ groupId }),
-  });
+  useEffect(() => {
+    if (!canLoadHistory) {
+      return;
+    }
 
-  const hasAccess = (participantsQuery.data ?? []).some(
-    (participant) =>
-      typeof participant.emailId === "string" &&
-      userEmails.has(participant.emailId.trim().toLowerCase()),
-  );
+    void requestHistory({
+        type: "load.history",
+        payload: {},
+      })
+      .catch(() => {
+        // Access and load errors are surfaced through session state.
+      });
+  }, [canLoadHistory, groupId, requestHistory]);
 
-  const historyQuery = useQuery({
-    queryKey: ["spin-history", groupId],
-    queryFn: () => groupsApi.listSpinHistory({ groupId }),
-    enabled: hasAccess,
-    retry: (failureCount, error) => {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) {
-        return false;
-      }
-
-      return failureCount < 3;
-    },
-  });
-
-  if (participantsQuery.isLoading) {
-    return <p className="status-text">Loading access...</p>;
+  if (groupSession.isLoading) {
+    return <p className="status-text">Loading history...</p>;
   }
 
-  if (participantsQuery.isError) {
+  if (groupSession.error && !groupSession.group) {
     return (
       <section className="center-panel">
         <h1>History Unavailable</h1>
         <p className="muted-text">This group id does not exist or cannot be loaded.</p>
         <Link className="primary-btn link-btn" to="/groups/$groupId" params={{ groupId }}>
-          Back to wheel
+          <span className="btn-content">
+            <IconArrowLeft />
+            <span className="btn-label">Back to Wheel</span>
+          </span>
         </Link>
       </section>
     );
   }
 
-  if (!hasAccess) {
+  if (!groupSession.viewer?.isParticipant && !groupSession.viewer?.isOwner) {
     return (
       <section className="center-panel">
         <h1>Access Denied</h1>
         <p className="muted-text">Only participants in this group can view history.</p>
         <SignInButton mode="modal">
-          <button type="button" className="ghost-btn">Log In</button>
+          <button type="button" className="ghost-btn">
+            <span className="btn-content">
+              <IconLogin />
+              <span className="btn-label">Log In</span>
+            </span>
+          </button>
         </SignInButton>
         <div className="modal-actions">
           <Link className="primary-btn link-btn" to="/groups/$groupId" params={{ groupId }}>
-            Back to wheel
+            <span className="btn-content">
+              <IconArrowLeft />
+              <span className="btn-label">Back to Wheel</span>
+            </span>
           </Link>
         </div>
       </section>
     );
   }
 
-  if (historyQuery.isLoading) {
-    return <p className="status-text">Loading history...</p>;
-  }
-
-  if (historyQuery.isError) {
-    return (
-      <section className="center-panel">
-        <h1>History Unavailable</h1>
-        <p className="muted-text">This group id does not exist or cannot be loaded.</p>
-        <Link className="primary-btn link-btn" to="/groups/$groupId" params={{ groupId }}>
-          Back to wheel
-        </Link>
-      </section>
-    );
-  }
-
-  const history = historyQuery.data ?? [];
+  const history = groupSession.history ?? [];
 
   return (
     <section className="history-layout reveal-up" aria-labelledby="history-heading">
@@ -111,7 +98,10 @@ function GroupHistoryPage() {
           <p className="muted-text">Showing up to the latest 20 spins.</p>
         </div>
         <Link className="ghost-btn link-btn history-back-btn" to="/groups/$groupId" params={{ groupId }}>
-          Back to wheel
+          <span className="btn-content">
+            <IconArrowLeft />
+            <span className="btn-label">Back to Wheel</span>
+          </span>
         </Link>
       </header>
 
@@ -122,8 +112,8 @@ function GroupHistoryPage() {
           <ul className="history-list">
             {history.map((item) => {
               const winner =
-                item.participants.find((participant) => participant.id === item.winnerParticipantId)
-                  ?.name ?? item.winnerParticipantId;
+                item.participants.find((participant) => participant.id === item.winnerParticipantId)?.name ??
+                item.winnerParticipantId;
 
               return (
                 <li key={item.id} className="history-item">

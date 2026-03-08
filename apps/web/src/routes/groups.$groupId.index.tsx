@@ -1,16 +1,35 @@
 import { useAuth } from "@clerk/clerk-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { type CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { audioEngine } from "../lib/audio";
-import { connectGroupRealtime, type GroupRealtimeStatus } from "../lib/group-realtime";
 import {
-  ApiError,
-  type GroupsApi,
-  useCurrentUserEmailSet,
-  useGroupsApi,
-  type GroupRealtimeEvent,
+  Bookmark as IconBookmark,
+  BookmarkCheck as IconBookmarkFilled,
+  Check as IconCheck,
+  Pencil as IconEdit,
+  Share2 as IconShare,
+  Trash2 as IconTrash,
+  UserRoundX as IconUserX,
+  Volume2 as IconVolumeOn,
+  VolumeX as IconVolumeOff,
+} from "lucide-react";
+import { type CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  IconConnected,
+  IconClose,
+  IconDisconnected,
+  IconHistory,
+  IconNewGroup,
+  IconRespin,
+  IconSave,
+  IconSpark,
+  IconUsers,
+} from "../components/button-icons";
+import { audioEngine } from "../lib/audio";
+import { type GroupRealtimeStatus } from "../lib/group-realtime";
+import { useGroupSession } from "../lib/group-session";
+import {
   type GroupSpinState,
+  useGroupsApi,
   type Participant,
 } from "../lib/groups";
 import { clearLastGroupId, setLastGroupId } from "../lib/storage";
@@ -19,12 +38,6 @@ import { activeParticipants, rotationForWinner, segmentColor, weightedSegments }
 export const Route = createFileRoute("/groups/$groupId/")({
   component: GroupPageRoute,
 });
-
-type GroupData = Awaited<ReturnType<GroupsApi["getGroup"]>>;
-
-type ParticipantMutationContext = {
-  previousParticipants: Participant[];
-};
 
 type ParticipantDraft = {
   id: string;
@@ -50,22 +63,6 @@ type ConfettiPiece = {
 type ConfettiStyle = CSSProperties & Record<`--${string}`, string>;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function dedupeParticipantsById(participants: Participant[]): Participant[] {
-  const seen = new Set<string>();
-  const result: Participant[] = [];
-
-  for (const participant of participants) {
-    if (seen.has(participant.id)) {
-      continue;
-    }
-
-    seen.add(participant.id);
-    result.push(participant);
-  }
-
-  return result;
-}
 
 function normalizeEmailInput(value: string): string | null {
   const trimmed = value.trim();
@@ -97,102 +94,6 @@ function participantToDraft(participant: Participant): ParticipantDraft {
   };
 }
 
-function IconVolumeOn() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M3 9v6h4l5 4V5L7 9H3Zm13.5 3a3.5 3.5 0 0 0-1.8-3.07v6.14A3.5 3.5 0 0 0 16.5 12Zm-1.8-8.34v2.06a7 7 0 0 1 0 12.56v2.06a9 9 0 0 0 0-16.68Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconVolumeOff() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M3 9v6h4l5 4V5L7 9H3Zm16.1-.1-1.4-1.4L15 10.2l-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4-2.7-2.7 2.7-2.7Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconCheck() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M9.2 16.2 5.5 12.5l1.4-1.4 2.3 2.3 7-7 1.4 1.4-8.4 8.4Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconUserX() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-3.3 0-6 1.35-6 3v1h9.6a5.6 5.6 0 0 1-.6-2.5c0-.52.07-1.03.2-1.5Zm7.8 7.2-1.6 1.6-1.7-1.7-1.7 1.7-1.6-1.6 1.7-1.7-1.7-1.7 1.6-1.6 1.7 1.7 1.7-1.7 1.6 1.6-1.7 1.7 1.7 1.7Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconTrash() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm-5-11h10v2H7v-2Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconShare() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M14 3h7v7h-2V6.41l-8.29 8.3-1.42-1.42 8.3-8.29H14V3ZM5 5h6v2H7v10h10v-4h2v6H5V5Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconEdit() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="m4 15.7 9.8-9.8 4.3 4.3-9.8 9.8H4v-4.3Zm2 2h1.4l8.6-8.6-1.4-1.4L6 16.3v1.4Zm12.9-8.9-4.3-4.3 1.1-1.1a1.5 1.5 0 0 1 2.1 0L20 5.6a1.5 1.5 0 0 1 0 2.1l-1.1 1.1Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconBookmark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3-6 3V4.5ZM8.5 4a.5.5 0 0 0-.5.5v14.3l4-2 4 2V4.5a.5.5 0 0 0-.5-.5h-7Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconBookmarkFilled() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6 4.5A2.5 2.5 0 0 1 8.5 2h7A2.5 2.5 0 0 1 18 4.5V22l-6-3-6 3V4.5Z" fill="currentColor" />
-    </svg>
-  );
-}
-
 function GroupPageRoute() {
   const { groupId } = Route.useParams();
 
@@ -203,7 +104,7 @@ function GroupPage() {
   const { groupId } = Route.useParams();
   const groupsApi = useGroupsApi();
   const { isSignedIn, userId } = useAuth();
-  const userEmails = useCurrentUserEmailSet();
+  const groupSession = useGroupSession(groupId);
   const queryClient = useQueryClient();
   const [rotation, setRotation] = useState(0);
   const [spinDurationMs, setSpinDurationMs] = useState(0);
@@ -212,7 +113,6 @@ function GroupPage() {
   const [winnerSpinId, setWinnerSpinId] = useState<string | null>(null);
   const [spinError, setSpinError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(audioEngine.isMuted());
-  const [realtimeStatus, setRealtimeStatus] = useState<GroupRealtimeStatus>("connecting");
   const [isSpinRequestPending, setIsSpinRequestPending] = useState(false);
   const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
   const [participantModalError, setParticipantModalError] = useState<string | null>(null);
@@ -234,25 +134,9 @@ function GroupPage() {
   const currentSpinIdRef = useRef<string | null>(null);
   const currentSpinWinnerIdRef = useRef<string | null>(null);
   const lastWinnerEffectKeyRef = useRef<string | null>(null);
-  const lastVersionRef = useRef(0);
-  const applyRealtimeEventRef = useRef<(event: GroupRealtimeEvent) => void>(() => {});
-
-  const groupQuery = useQuery({
-    queryKey: ["groups", groupId],
-    queryFn: () => groupsApi.getGroup({ id: groupId }),
-    retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 404) {
-        return false;
-      }
-
-      return failureCount < 3;
-    },
-  });
-
-  const participantsQuery = useQuery({
-    queryKey: ["participants", groupId],
-    queryFn: () => groupsApi.listParticipants({ groupId }),
-  });
+  const hasHydratedSpinRef = useRef(false);
+  const lastObservedSpinStatusRef = useRef<GroupSpinState["status"]>("idle");
+  const lastObservedSpinIdRef = useRef<string | null>(null);
   const bookmarkedGroupIdsQuery = useQuery({
     queryKey: ["group-bookmarks"],
     queryFn: () => groupsApi.listBookmarkedGroupIds(),
@@ -276,22 +160,16 @@ function GroupPage() {
     },
   });
 
-  const participants = useMemo(() => participantsQuery.data ?? [], [participantsQuery.data]);
-  const currentUserParticipant = useMemo(
-    () =>
-      participants.find(
-        (participant) =>
-          typeof participant.emailId === "string" &&
-          userEmails.has(participant.emailId.trim().toLowerCase()),
-      ) ?? null,
-    [participants, userEmails],
-  );
-  const canManageParticipants = Boolean(currentUserParticipant?.manager);
-  const canSpin = Boolean(currentUserParticipant);
-  const canViewHistory = Boolean(currentUserParticipant);
+  const group = groupSession.group;
+  const participants = useMemo(() => groupSession.participants ?? [], [groupSession.participants]);
+  const viewer = groupSession.viewer;
+  const canManageParticipants = Boolean(viewer?.isManager);
+  const canSpin = Boolean(viewer?.isParticipant || viewer?.isOwner);
+  const canViewHistory = canSpin;
   const bookmarkedGroupIds = bookmarkedGroupIdsQuery.data ?? [];
   const isGroupBookmarked = bookmarkedGroupIds.includes(groupId);
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
+  const realtimeStatus: GroupRealtimeStatus = groupSession.status;
   const isRealtimeConnected = realtimeStatus === "open";
   const wheelSegments = useMemo(
     () => weightedSegments(eligibleParticipants),
@@ -314,7 +192,7 @@ function GroupPage() {
     }
   };
 
-  const scheduleSpinTick = (spinStartedAtMs: number, spinDurationMs: number) => {
+  const scheduleSpinTick = useCallback((spinStartedAtMs: number, spinDurationMs: number) => {
     const elapsedMs = performance.now() - spinStartedAtMs;
     const progress = Math.min(1, Math.max(0, elapsedMs / spinDurationMs));
 
@@ -332,7 +210,7 @@ function GroupPage() {
       void audioEngine.playTick();
       scheduleSpinTick(spinStartedAtMs, spinDurationMs);
     }, delayMs);
-  };
+  }, []);
 
   const clearShareFeedbackTimer = () => {
     if (shareFeedbackTimeoutRef.current !== null) {
@@ -341,21 +219,19 @@ function GroupPage() {
     }
   };
 
-  const applyWinner = (winnerParticipantId: string | null, spinId: string | null) => {
+  const applyWinner = useCallback((winnerParticipantId: string | null, spinId: string | null) => {
     if (!winnerParticipantId) {
       setWinner(null);
       setWinnerSpinId(null);
       return;
     }
 
-    const latestParticipants =
-      queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
-    const nextWinner = latestParticipants.find((participant) => participant.id === winnerParticipantId);
+    const nextWinner = participants.find((participant) => participant.id === winnerParticipantId);
     setWinner(nextWinner ?? null);
     setWinnerSpinId(spinId);
-  };
+  }, [participants]);
 
-  const runSpinAnimation = (spin: GroupSpinState) => {
+  const runSpinAnimation = useCallback((spin: GroupSpinState) => {
     if (
       spin.status !== "spinning" ||
       !spin.winnerParticipantId ||
@@ -365,9 +241,7 @@ function GroupPage() {
       return;
     }
 
-    const latestParticipants =
-      queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
-    const latestActive = activeParticipants(latestParticipants);
+    const latestActive = activeParticipants(participants);
     const segments = weightedSegments(latestActive);
     if (!segments.some((segment) => segment.participantId === spin.winnerParticipantId)) {
       return;
@@ -401,114 +275,7 @@ function GroupPage() {
       setIsSpinning(false);
       applyWinner(currentSpinWinnerIdRef.current, currentSpinIdRef.current);
     }, spin.durationMs);
-  };
-
-  const applyRealtimeEvent = (event: GroupRealtimeEvent) => {
-    if (event.type !== "snapshot" && event.version < lastVersionRef.current) {
-      return;
-    }
-
-    lastVersionRef.current = Math.max(lastVersionRef.current, event.version);
-
-    switch (event.type) {
-      case "snapshot": {
-        queryClient.setQueryData<GroupData>(["groups", groupId], event.payload.group);
-        queryClient.setQueryData<Participant[]>(["participants", groupId], event.payload.participants);
-
-        if (
-          event.payload.spin.status === "spinning" &&
-          event.payload.spin.spinId &&
-          event.payload.spin.spinId !== currentSpinIdRef.current
-        ) {
-          runSpinAnimation(event.payload.spin);
-        }
-
-        break;
-      }
-
-      case "group.updated": {
-        queryClient.setQueryData<GroupData>(["groups", groupId], event.payload.group);
-        break;
-      }
-
-      case "participant.added": {
-        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
-          dedupeParticipantsById([...current, event.payload.participant]),
-        );
-        break;
-      }
-
-      case "participant.updated": {
-        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
-          current.map((participant) =>
-            participant.id === event.payload.participant.id
-              ? event.payload.participant
-              : participant,
-          ),
-        );
-        break;
-      }
-
-      case "participant.removed": {
-        queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
-          current.filter((participant) => participant.id !== event.payload.participantId),
-        );
-
-        if (winner?.id === event.payload.participantId) {
-          setWinner(null);
-        }
-        break;
-      }
-
-      case "spin.started": {
-        if (event.payload.spin.spinId === currentSpinIdRef.current && isSpinning) {
-          break;
-        }
-
-        runSpinAnimation(event.payload.spin);
-        break;
-      }
-
-      case "spin.resolved": {
-        currentSpinWinnerIdRef.current = event.payload.spin.winnerParticipantId;
-        currentSpinIdRef.current = event.payload.spin.spinId;
-        if (!isSpinning) {
-          applyWinner(event.payload.spin.winnerParticipantId, event.payload.spin.spinId);
-        }
-        setIsSpinRequestPending(false);
-        break;
-      }
-
-      case "spin.result.dismissed": {
-        if (winnerSpinId === event.payload.spinId) {
-          setWinner(null);
-          setWinnerSpinId(null);
-        }
-        setSpinError(null);
-        if (event.payload.action === "discard") {
-          void queryClient.invalidateQueries({ queryKey: ["spin-history", groupId] });
-        }
-        break;
-      }
-
-      default:
-        break;
-    }
-  };
-
-  applyRealtimeEventRef.current = applyRealtimeEvent;
-
-  useEffect(() => {
-    const connection = connectGroupRealtime({
-      groupId,
-      onEvent: (event) => applyRealtimeEventRef.current(event),
-      onStatusChange: setRealtimeStatus,
-    });
-
-    return () => {
-      connection.close();
-    };
-  }, [groupId]);
+  }, [applyWinner, participants, scheduleSpinTick]);
 
   useEffect(() => {
     return () => {
@@ -555,39 +322,85 @@ function GroupPage() {
   }, [winner, winnerSpinId]);
 
   useEffect(() => {
-    if (groupQuery.data?.id) {
-      setLastGroupId(groupQuery.data.id);
+    if (group?.id) {
+      setLastGroupId(group.id);
     }
-  }, [groupQuery.data]);
+  }, [group]);
 
-  const togglePresenceMutation = useMutation<
-    Participant,
-    Error,
-    { participantId: string; active: boolean },
-    ParticipantMutationContext
-  >({
-    mutationFn: ({ participantId, active }) =>
-      groupsApi.setParticipantActive({ groupId, participantId, active }),
-    onMutate: async ({ participantId, active }) => {
-      await queryClient.cancelQueries({ queryKey: ["participants", groupId] });
-      const previousParticipants =
-        queryClient.getQueryData<Participant[]>(["participants", groupId]) ?? [];
+  useEffect(() => {
+    const spin = groupSession.spin;
 
-      queryClient.setQueryData<Participant[]>(["participants", groupId], (current = []) =>
-        current.map((participant) =>
-          participant.id === participantId ? { ...participant, active } : participant,
-        ),
-      );
+    if (!hasHydratedSpinRef.current) {
+      hasHydratedSpinRef.current = true;
+      lastObservedSpinStatusRef.current = spin.status;
+      lastObservedSpinIdRef.current = spin.spinId;
+      currentSpinWinnerIdRef.current = spin.winnerParticipantId;
+      currentSpinIdRef.current = spin.spinId;
 
-      return { previousParticipants };
-    },
-    onError: (_error, _variables, context) => {
-      if (context) {
-        queryClient.setQueryData<Participant[]>(
-          ["participants", groupId],
-          context.previousParticipants,
-        );
+      if (spin.status === "spinning" && spin.spinId) {
+        runSpinAnimation(spin);
       }
+      return;
+    }
+
+    if (
+      spin.status === "spinning" &&
+      spin.spinId &&
+      spin.spinId !== currentSpinIdRef.current
+    ) {
+      lastObservedSpinStatusRef.current = spin.status;
+      lastObservedSpinIdRef.current = spin.spinId;
+      runSpinAnimation(spin);
+      return;
+    }
+
+    currentSpinWinnerIdRef.current = spin.winnerParticipantId;
+    currentSpinIdRef.current = spin.spinId;
+
+    const resolvedDuringLiveSession =
+      spin.status === "idle" &&
+      spin.spinId &&
+      !isSpinning &&
+      lastObservedSpinStatusRef.current === "spinning" &&
+      lastObservedSpinIdRef.current === spin.spinId;
+
+    if (resolvedDuringLiveSession) {
+      applyWinner(spin.winnerParticipantId, spin.spinId);
+      setIsSpinRequestPending(false);
+    }
+
+    lastObservedSpinStatusRef.current = spin.status;
+    lastObservedSpinIdRef.current = spin.spinId;
+  }, [applyWinner, groupSession.spin, isSpinning, participants, runSpinAnimation]);
+
+  useEffect(() => {
+    if (winner && !participants.some((participant) => participant.id === winner.id)) {
+      setWinner(null);
+      setWinnerSpinId(null);
+    }
+  }, [participants, winner]);
+
+  useEffect(() => {
+    if (!groupSession.dismissedSpinResult) {
+      return;
+    }
+
+    if (winnerSpinId === groupSession.dismissedSpinResult.spinId) {
+      setWinner(null);
+      setWinnerSpinId(null);
+      setSpinError(null);
+      setIsSpinRequestPending(false);
+    }
+  }, [groupSession.dismissedSpinResult, winnerSpinId]);
+
+  const togglePresenceMutation = useMutation<void, Error, { participantId: string; active: boolean }>({
+    mutationFn: ({ participantId, active }) =>
+      groupSession.request({
+        type: "participant.setActive",
+        payload: { participantId, active },
+      }),
+    onError: (error: Error) => {
+      setSpinError(error.message);
     },
   });
 
@@ -596,13 +409,15 @@ function GroupPage() {
       adds: Array<{ name: string; emailId: string | null; manager: boolean }>;
       updates: Array<{ participantId: string; emailId: string | null; manager: boolean }>;
       removes: string[];
-    }) => groupsApi.commitParticipants({ groupId, ...input }),
+    }) =>
+      groupSession.request({
+        type: "participants.commit",
+        payload: input,
+      }),
     onError: (error: Error) => {
       setParticipantModalError(error.message);
     },
-    onSuccess: async (nextParticipants) => {
-      queryClient.setQueryData<Participant[]>(["participants", groupId], nextParticipants);
-      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
+    onSuccess: async () => {
       setParticipantModalError(null);
       setNewParticipantError(null);
       setIsParticipantModalOpen(false);
@@ -610,7 +425,11 @@ function GroupPage() {
   });
 
   const spinMutation = useMutation({
-    mutationFn: () => groupsApi.requestSpin({ groupId }),
+    mutationFn: () =>
+      groupSession.request({
+        type: "spin.start",
+        payload: {},
+      }),
     onMutate: () => {
       setSpinError(null);
       setIsSpinRequestPending(true);
@@ -622,35 +441,39 @@ function GroupPage() {
   });
 
   const renameGroupMutation = useMutation({
-    mutationFn: (name: string) => groupsApi.renameGroup({ groupId, name }),
+    mutationFn: (name: string) =>
+      groupSession.request({
+        type: "group.rename",
+        payload: { name },
+      }),
     onError: (error: Error) => {
       setRenameError(error.message);
     },
-    onSuccess: (nextGroup) => {
-      queryClient.setQueryData<GroupData>(["groups", groupId], nextGroup);
+    onSuccess: () => {
       setRenameError(null);
       setIsRenameModalOpen(false);
     },
   });
 
   const discardSpinHistoryMutation = useMutation({
-    mutationFn: (spinId: string) => groupsApi.discardSpinHistoryItem({ groupId, spinId }),
+    mutationFn: (spinId: string) =>
+      groupSession.request({
+        type: "history.discard",
+        payload: { spinId },
+      }),
     onError: (error: Error) => {
       setSpinError(error.message);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
-      await queryClient.invalidateQueries({ queryKey: ["spin-history", groupId] });
     },
   });
 
   const saveSpinHistoryMutation = useMutation({
-    mutationFn: (spinId: string) => groupsApi.saveSpinHistoryItem({ groupId, spinId }),
+    mutationFn: (spinId: string) =>
+      groupSession.request({
+        type: "history.save",
+        payload: { spinId },
+      }),
     onError: (error: Error) => {
       setSpinError(error.message);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["participants", groupId] });
     },
   });
 
@@ -828,15 +651,15 @@ function GroupPage() {
     spinMutation.mutate();
   };
 
-  if (groupQuery.isLoading || participantsQuery.isLoading) {
+  if (groupSession.isLoading) {
     return <p className="status-text">Loading group...</p>;
   }
 
-  if (groupQuery.isError) {
+  if (groupSession.error && !groupSession.group) {
     return (
       <section className="center-panel">
-        <h1>Group Not Found</h1>
-        <p className="muted-text">This group id does not exist.</p>
+        <h1>Group Unavailable</h1>
+        <p className="muted-text">{groupSession.error.message || "This group could not be loaded."}</p>
         <Link
           className="primary-btn link-btn"
           to="/"
@@ -850,12 +673,11 @@ function GroupPage() {
     );
   }
 
-  const group = groupQuery.data;
   if (!group) {
     return <p className="status-text">Group unavailable.</p>;
   }
 
-  const isGroupOwner = Boolean(userId && group.ownerUserId === userId);
+  const isGroupOwner = Boolean(viewer?.isOwner || (userId && group.ownerUserId === userId));
   const canBookmarkGroup = isSignedIn && Boolean(userId) && !isGroupOwner;
   const bookmarkTitle = isGroupBookmarked ? "Remove bookmark" : "Bookmark group";
 
@@ -978,14 +800,18 @@ function GroupPage() {
               </span>
             )}
           </div>
-          <p
+          <span
             className={`connection-status ${
               isRealtimeConnected ? "connection-status-connected" : "connection-status-disconnected"
             }`}
+            role="status"
+            aria-live="polite"
+            aria-label={isRealtimeConnected ? "Connected" : "Disconnected"}
+            title={isRealtimeConnected ? "Connected" : "Disconnected"}
           >
-            <span className="connection-status-dot" aria-hidden />
-            <span>{isRealtimeConnected ? "Connected" : "Disconnected"}</span>
-          </p>
+            {isRealtimeConnected ? <IconConnected aria-hidden="true" /> : <IconDisconnected aria-hidden="true" />}
+            <span className="sr-only">{isRealtimeConnected ? "Connected" : "Disconnected"}</span>
+          </span>
         </div>
         <div className="header-actions">
           <Link
@@ -996,7 +822,10 @@ function GroupPage() {
               clearLastGroupId();
             }}
           >
-            Create new group
+            <span className="btn-content">
+              <IconNewGroup />
+              <span className="btn-label">New Group</span>
+            </span>
           </Link>
           <button
             type="button"
@@ -1029,7 +858,10 @@ function GroupPage() {
                   openParticipantModal();
                 }}
               >
-                Manage Participants
+                <span className="btn-content">
+                  <IconUsers />
+                  <span className="btn-label">Manage</span>
+                </span>
               </button>
             )}
           </div>
@@ -1077,11 +909,17 @@ function GroupPage() {
               to="/groups/$groupId/history"
               params={{ groupId }}
             >
-              View History
+              <span className="btn-content">
+                <IconHistory />
+                <span className="btn-label">View History</span>
+              </span>
             </Link>
           ) : (
             <button type="button" className="ghost-btn participant-history-link" disabled>
-              View History
+              <span className="btn-content">
+                <IconHistory />
+                <span className="btn-label">View History</span>
+              </span>
             </button>
           )}
           {!isSignedIn && <p className="muted-text">Log in to manage participants.</p>}
@@ -1172,7 +1010,12 @@ function GroupPage() {
             onClick={onSpin}
             disabled={!canSpin || isSpinning || isSpinRequestPending || eligibleParticipants.length < 2}
           >
-            {isSpinning || isSpinRequestPending ? "Spinning..." : "Spin the Wheel"}
+            <span className="btn-content">
+              <IconSpark />
+              <span className="btn-label">
+                {isSpinning || isSpinRequestPending ? "Spinning..." : "Spin the Wheel"}
+              </span>
+            </span>
           </button>
           {!canSpin && (
             <p className="muted-text">Only group participants can spin the wheel.</p>
@@ -1206,7 +1049,12 @@ function GroupPage() {
                 }}
                 disabled={renameGroupMutation.isPending}
               >
-                {renameGroupMutation.isPending ? "Renaming..." : "Rename"}
+                <span className="btn-content">
+                  <IconSpark />
+                  <span className="btn-label">
+                    {renameGroupMutation.isPending ? "Renaming..." : "Rename"}
+                  </span>
+                </span>
               </button>
               <button
                 type="button"
@@ -1218,7 +1066,10 @@ function GroupPage() {
                 }}
                 disabled={renameGroupMutation.isPending}
               >
-                Cancel
+                <span className="btn-content">
+                  <IconClose />
+                  <span className="btn-label">Cancel</span>
+                </span>
               </button>
             </div>
           </div>
@@ -1228,8 +1079,9 @@ function GroupPage() {
       {isParticipantModalOpen && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal participant-modal" role="dialog" aria-modal="true" aria-labelledby="manage-participants-heading">
+            <p className="eyebrow participant-modal-eyebrow">Group Setup</p>
             <h2 id="manage-participants-heading">Manage Participants</h2>
-            <p className="muted-text">Changes apply only when you confirm.</p>
+            <p className="muted-text participant-modal-copy">Changes apply only when you confirm.</p>
 
             <form className="participant-add-form" onSubmit={onAddDraftParticipant}>
               <input
@@ -1269,7 +1121,7 @@ function GroupPage() {
               </button>
             </form>
 
-            {newParticipantError && <p className="error-text">{newParticipantError}</p>}
+            {newParticipantError && <p className="error-text participant-modal-error">{newParticipantError}</p>}
 
             <ul className="participant-edit-list">
               {participantDrafts.length === 0 && <li className="muted-text">No participants in draft.</li>}
@@ -1353,7 +1205,10 @@ function GroupPage() {
                 onClick={onConfirmParticipantModal}
                 disabled={commitParticipantsMutation.isPending || hasDraftValidationError || !hasDraftChanges}
               >
-                Confirm Changes
+                <span className="btn-content">
+                  <IconUsers />
+                  <span className="btn-label">Confirm Changes</span>
+                </span>
               </button>
               <button
                 type="button"
@@ -1365,10 +1220,13 @@ function GroupPage() {
                 }}
                 disabled={commitParticipantsMutation.isPending}
               >
-                Cancel
+                <span className="btn-content">
+                  <IconClose />
+                  <span className="btn-label">Cancel</span>
+                </span>
               </button>
             </div>
-            {participantModalError && <p className="error-text">{participantModalError}</p>}
+            {participantModalError && <p className="error-text participant-modal-error">{participantModalError}</p>}
           </div>
         </div>
       )}
@@ -1427,7 +1285,10 @@ function GroupPage() {
                   autoFocus
                   disabled={saveSpinHistoryMutation.isPending}
                 >
-                  Save
+                  <span className="btn-content">
+                    <IconSave />
+                    <span className="btn-label">Save</span>
+                  </span>
                 </button>
               )}
               {canSaveOrDiscardWinner && (
@@ -1449,7 +1310,10 @@ function GroupPage() {
                   }}
                   disabled={saveSpinHistoryMutation.isPending || discardSpinHistoryMutation.isPending}
                 >
-                  Discard
+                  <span className="btn-content">
+                    <IconClose />
+                    <span className="btn-label">Discard</span>
+                  </span>
                 </button>
               )}
               {canRespinWinner && (
@@ -1476,7 +1340,10 @@ function GroupPage() {
                   autoFocus={!canSaveOrDiscardWinner}
                   disabled={saveSpinHistoryMutation.isPending || discardSpinHistoryMutation.isPending}
                 >
-                  Respin
+                  <span className="btn-content">
+                    <IconRespin />
+                    <span className="btn-label">Respin</span>
+                  </span>
                 </button>
               )}
               {!canSaveOrDiscardWinner && !canRespinWinner && (
@@ -1490,7 +1357,10 @@ function GroupPage() {
                   }}
                   autoFocus
                 >
-                  Close
+                  <span className="btn-content">
+                    <IconClose />
+                    <span className="btn-label">Close</span>
+                  </span>
                 </button>
               )}
             </div>
