@@ -25,6 +25,7 @@ import {
   IconUsers,
 } from "../components/button-icons";
 import { audioEngine } from "../lib/audio";
+import { deriveGroupPageAccess } from "../lib/group-page-access";
 import { type GroupRealtimeStatus } from "../lib/group-realtime";
 import { useGroupSession } from "../lib/group-session";
 import {
@@ -164,8 +165,7 @@ function GroupPage() {
   const participants = useMemo(() => groupSession.participants ?? [], [groupSession.participants]);
   const viewer = groupSession.viewer;
   const canManageParticipants = Boolean(viewer?.isManager);
-  const canSpin = Boolean(viewer?.isParticipant || viewer?.isOwner);
-  const canViewHistory = canSpin;
+  const { canTogglePresence, canSpin, canViewHistory } = deriveGroupPageAccess(viewer);
   const bookmarkedGroupIds = bookmarkedGroupIdsQuery.data ?? [];
   const isGroupBookmarked = bookmarkedGroupIds.includes(groupId);
   const eligibleParticipants = useMemo(() => activeParticipants(participants), [participants]);
@@ -881,7 +881,7 @@ function GroupPage() {
                       active: !participant.active,
                     })
                   }
-                  disabled={!canSpin}
+                  disabled={!canTogglePresence}
                   aria-label={
                     participant.active
                       ? "Mark participant absent and exclude from wheel"
@@ -924,7 +924,7 @@ function GroupPage() {
             </button>
           )}
           {!isSignedIn && <p className="muted-text">Log in to manage participants.</p>}
-          {isSignedIn && !canSpin && (
+          {isSignedIn && !canTogglePresence && (
             <p className="muted-text">You are not a participant in this group.</p>
           )}
         </aside>

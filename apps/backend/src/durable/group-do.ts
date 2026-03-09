@@ -487,9 +487,6 @@ export class GroupDurableObject {
           return;
         case "participant.setActive":
           this.requireParticipantAccess(access);
-          if (access.participantId !== command.payload.participantId && !access.isManager) {
-            throw new Error("Manager access is required.");
-          }
           await this.handleSetParticipantActive(client, current, command);
           return;
         case "participants.commit":
