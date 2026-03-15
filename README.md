@@ -56,6 +56,7 @@ Set values in `apps/web/.env`:
 ```env
 VITE_API_URL=http://127.0.0.1:8787
 VITE_CLERK_PUBLISHABLE_KEY=pk_test_xxx
+VITE_SITE_URL=https://theunfairwheel-web.pages.dev
 ```
 
 ### 3. Configure backend env

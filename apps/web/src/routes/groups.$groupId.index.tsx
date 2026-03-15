@@ -33,6 +33,7 @@ import {
   useGroupsApi,
   type Participant,
 } from "../lib/groups";
+import { buildGroupSeo, SeoHead } from "../lib/seo";
 import { clearLastGroupId, setLastGroupId } from "../lib/storage";
 import { activeParticipants, rotationForWinner, segmentColor, weightedSegments } from "../lib/wheel";
 
@@ -734,7 +735,9 @@ function GroupPage() {
     (Boolean(winnerSpinId) || !discardSpinHistoryMutation.isPending);
 
   return (
-    <section className="game-layout reveal-up">
+    <>
+      <SeoHead meta={buildGroupSeo(groupId)} />
+      <section className="game-layout reveal-up">
       <header className="panel header-panel">
         <div className="header-title-block">
           <p className="eyebrow">Group Lobby</p>
@@ -1371,6 +1374,7 @@ function GroupPage() {
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </>
   );
 }

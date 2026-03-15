@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /groups/
+
+Sitemap: https://theunfairwheel-web.pages.dev/sitemap.xml

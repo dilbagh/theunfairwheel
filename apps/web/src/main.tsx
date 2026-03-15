@@ -3,6 +3,7 @@ import { dark } from "@clerk/themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { createRoot } from "react-dom/client";
+import { HelmetProvider } from "react-helmet-async";
 import { router } from "./router";
 import "./styles.css";
 
@@ -19,14 +20,16 @@ if (!clerkPublishableKey) {
 }
 
 createRoot(rootEl).render(
-  <ClerkProvider
-    publishableKey={clerkPublishableKey}
-    appearance={{
-      baseTheme: dark,
-    }}
-  >
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
-  </ClerkProvider>,
+  <HelmetProvider>
+    <ClerkProvider
+      publishableKey={clerkPublishableKey}
+      appearance={{
+        baseTheme: dark,
+      }}
+    >
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ClerkProvider>
+  </HelmetProvider>,
 );

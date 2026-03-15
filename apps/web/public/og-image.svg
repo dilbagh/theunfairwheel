@@ -1,0 +1,67 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="70" x2="1100" y2="590" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07152A"/>
+      <stop offset="0.52" stop-color="#0B2034"/>
+      <stop offset="1" stop-color="#050912"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(260 160) rotate(54.58) scale(295.492 361.19)">
+      <stop stop-color="#26DEFF" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#26DEFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(915 520) rotate(180) scale(340 240)">
+      <stop stop-color="#3FF0B0" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#3FF0B0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" rx="28" fill="url(#bg)"/>
+  <rect width="1200" height="630" rx="28" fill="url(#glowA)"/>
+  <rect width="1200" height="630" rx="28" fill="url(#glowB)"/>
+  <g opacity="0.3">
+    <path d="M0 95H1200" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M0 190H1200" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M0 285H1200" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M0 380H1200" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M0 475H1200" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M0 570H1200" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M120 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M240 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M360 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M480 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M600 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M720 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M840 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M960 0V630" stroke="#26DEFF" stroke-width="1"/>
+    <path d="M1080 0V630" stroke="#26DEFF" stroke-width="1"/>
+  </g>
+  <circle cx="890" cy="315" r="182" fill="#0E1D32" stroke="#D9F3FF" stroke-width="8"/>
+  <path d="M890 315L890 133C958.626 133 1021.19 171.447 1054.71 232.501L890 315Z" fill="#26DEFF" fill-opacity="0.92"/>
+  <path d="M890 315L1054.71 232.501C1085.47 288.666 1088.77 356.323 1063.6 415.239L890 315Z" fill="#F4C866" fill-opacity="0.95"/>
+  <path d="M890 315L1063.6 415.239C1028.55 475.95 964.324 513 894.231 513L890 315Z" fill="#3FF0B0" fill-opacity="0.95"/>
+  <path d="M890 315L894.231 513C823.548 514.509 757.97 477.608 722.115 416.999L890 315Z" fill="#6BE1FF" fill-opacity="0.92"/>
+  <path d="M890 315L722.115 416.999C689.355 362.421 687.308 294.686 716.725 238.22L890 315Z" fill="#FF6D84" fill-opacity="0.9"/>
+  <path d="M890 315L716.725 238.22C749.987 163.246 815.743 133 890 133L890 315Z" fill="#9FF7D8" fill-opacity="0.9"/>
+  <circle cx="890" cy="315" r="28" fill="#F4C866"/>
+  <path d="M889 98L922 160H856L889 98Z" fill="#D9F3FF"/>
+  <text fill="#A7C6D6" font-family="Manrope, Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="0.24em">
+    <tspan x="92" y="118">THE UNFAIR WHEEL</tspan>
+  </text>
+  <text fill="#E9F9FF" font-family="Orbitron, Arial, sans-serif" font-size="68" font-weight="800">
+    <tspan x="90" y="230">Weighted Random</tspan>
+    <tspan x="90" y="306">Picker for Teams</tspan>
+  </text>
+  <text fill="#C8E7F2" font-family="Manrope, Arial, sans-serif" font-size="31" font-weight="500">
+    <tspan x="92" y="386">Fairer recurring selections with weighted odds,</tspan>
+    <tspan x="92" y="426">real-time syncing, participant management, and history.</tspan>
+  </text>
+  <g>
+    <rect x="92" y="479" width="228" height="54" rx="27" fill="#11314B" stroke="#26DEFF" stroke-width="2"/>
+    <text fill="#E9F9FF" font-family="Manrope, Arial, sans-serif" font-size="24" font-weight="700">
+      <tspan x="122" y="513">Real-time groups</tspan>
+    </text>
+    <rect x="338" y="479" width="242" height="54" rx="27" fill="#11314B" stroke="#3FF0B0" stroke-width="2"/>
+    <text fill="#E9F9FF" font-family="Manrope, Arial, sans-serif" font-size="24" font-weight="700">
+      <tspan x="372" y="513">Spin history</tspan>
+    </text>
+  </g>
+</svg>
