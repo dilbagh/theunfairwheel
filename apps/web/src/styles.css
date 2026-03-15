@@ -287,9 +287,15 @@ input {
 }
 
 .landing-page {
-  width: min(1100px, 100%);
+  width: 100%;
   display: grid;
   gap: 1.2rem;
+}
+
+.landing-page > .panel,
+.landing-page > .center-panel {
+  width: 100%;
+  max-width: none;
 }
 
 .landing-hero {
