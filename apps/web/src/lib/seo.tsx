@@ -9,7 +9,7 @@ export type SeoMeta = {
   jsonLd?: object | object[];
 };
 
-const FALLBACK_SITE_URL = "https://theunfairwheel-web.pages.dev";
+const FALLBACK_SITE_URL = "https://theunfairwheel.uk";
 
 const siteName = "The Unfair Wheel";
 const defaultDescription =

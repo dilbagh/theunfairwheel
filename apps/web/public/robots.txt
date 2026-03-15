@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /groups/
 
-Sitemap: https://theunfairwheel-web.pages.dev/sitemap.xml
+Sitemap: https://theunfairwheel.uk/sitemap.xml

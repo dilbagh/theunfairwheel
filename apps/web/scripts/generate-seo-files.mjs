@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-const fallbackSiteUrl = "https://theunfairwheel-web.pages.dev";
+const fallbackSiteUrl = "https://theunfairwheel.uk";
 const siteUrl = (globalThis.process?.env.VITE_SITE_URL || fallbackSiteUrl).replace(
   /\/+$/,
   "",

@@ -114,11 +114,11 @@ Required secrets:
 - `CLERK_SECRET_KEY`
 
 Recommended value format:
-- `PROD_FRONTEND_URL`: `https://<project>.pages.dev`
+- `PROD_FRONTEND_URL`: `https://theunfairwheel.uk`
 - `PROD_API_URL`: `https://<worker-name>.<subdomain>.workers.dev`
 
 Example:
-- `PROD_FRONTEND_URL=https://theunfairwheel-web.pages.dev`
+- `PROD_FRONTEND_URL=https://theunfairwheel.uk`
 - `PROD_API_URL=https://theunfairwheel-backend.<your-subdomain>.workers.dev`
 - `VITE_CLERK_PUBLISHABLE_KEY=pk_live_xxxxx`
 - `CLERK_SECRET_KEY=sk_live_xxxxx`
@@ -165,7 +165,7 @@ It uses:
 
 ### 7.2 Confirm frontend
 
-1. Open your `https://<project>.pages.dev` URL.
+1. Open `https://theunfairwheel.uk`.
 2. Confirm latest UI changes are visible.
 
 ### 7.3 Confirm backend
